@@ -270,7 +270,7 @@ class NodeLet( Node ):
                 return ParseError.fromToken('Invalid token, expected identifier', token)
         elif self.n == 1:
             if token.t == '=':
-                ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self.parent,';',True)
+                ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,';',True)
                 self.children.append(ctx.node)
             elif token.t == ':':
                 return ParseError.fromToken('Type hints are not supported yet', token)
