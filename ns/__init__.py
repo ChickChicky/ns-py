@@ -261,22 +261,28 @@ class NodeExpression ( Node ):
             return ParseError.fromToken('Unexpected token', token)
 
 class NodeLet( Node ):
-    n    : int
-    name : str
-    expr : NodeExpression
+    n         : int
+    name      : str
+    expr      : NodeExpression
+    modifiers : set[str]
     
     def __init__(self,tokens:Tokens,i:int,parent:Node):
         super().__init__(tokens,i,parent)
         self.n = 0
         self.name = None
         self.expr = None
+        self.modifiers = set()
     
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
         if self.n == 0:
             if token.isidentifier():
-                self.name = token.t
+                if token.t in ('const',):
+                    self.modifiers.add(token.t)
+                    self.n -= 1
+                else:
+                    self.name = token.t
             else:
-                return ParseError.fromToken('Expected identifier', token)
+                return ParseError.fromToken('Expected identifier or modifier', token)
         elif self.n == 1:
             if token.t == '=':
                 ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,';',True)
