@@ -216,13 +216,40 @@ class NodeAccessColon( Node ):
         self.prop = prop
         
 class NodeIndex( Node ):
-    node  : Node
+    value : Node
     index : 'NodeExpression'
     
-    def __init__(self,tokens:Tokens,i:int,parent:Node,node:Node,index:str):
+    def __init__(self,tokens:Tokens,i:int,parent:Node,value:Node,index:str):
         super().__init__(tokens,i,parent)
-        self.node = node
+        self.value = value
         self.index = index
+        
+class NodeCall( Node ):
+    value : Node
+    args  : list['NodeExpression']
+    
+    def __init__(self,tokens:Tokens,i:int,parent:Node,value:Node):
+        super().__init__(tokens,i,parent)
+        self.value = value
+        self.args = []
+        self.arg = None
+
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if token.t == ')':
+            if self.arg:
+                self.args.append(self.arg)
+            if len(ctx.enclose) and ctx.enclose[-1].end == token.t:
+                ctx.enclose.pop()
+            else:
+                return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
+            ctx.node = self.parent
+        elif token.t == ',':
+            self.args.append(self.arg or NodeExpression(self.tokens,self.i,self,(',',')'),handleParent=True,allowEmpty=True))
+            self.arg = None
+        else:
+            ctx.node = NodeExpression(self.tokens,self.i,self,(',',')'),handleParent=True,allowEmpty=True)
+            self.arg = ctx.node
+            ctx.ptr -= 1
 
 class NodeExpression ( Node ):
     n             : int
@@ -272,9 +299,15 @@ class NodeExpression ( Node ):
                 else:
                     return ParseError.fromToken('Missing expression before `%s`'%(token.t,), token)
         elif token.t == '(':
-            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')',allowEmpty=True,finishEnclose=')')
-            self.buffer.append(ctx.node)
-            ctx.enclose.append(Enclosure(token,')'))
+            if len(self.buffer):
+                value = self.buffer.pop()
+                ctx.node = NodeCall(self.tokens,ctx.ptr,self,value)
+                self.buffer.append(ctx.node)
+                ctx.enclose.append(Enclosure(token,')'))
+            else:
+                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')',allowEmpty=True,finishEnclose=')')
+                self.buffer.append(ctx.node)
+                ctx.enclose.append(Enclosure(token,')'))
         elif token.t == '[':
             if len(self.buffer):
                 value = self.buffer.pop()

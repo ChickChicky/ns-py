@@ -14,7 +14,7 @@ def explore(tree:ns.Node,indent:str=''):
             print(indent+'\x1b[36m'+k+'\x1b[39m \x1b[33m'+repr(getattr(tree,k))+'\x1b[39m')
         else:
             print(indent+'\x1b[90m'+k+'\x1b[39m')
-    for n in tree.buffer if type(tree) == ns.NodeExpression else [tree.node] if type(tree) == ns.NodeAccessDot else [tree.node,tree.index] if type(tree) == ns.NodeIndex else tree.children:
+    for n in tree.buffer if type(tree) == ns.NodeExpression else [tree.node] if type(tree) == ns.NodeAccessDot else [tree.value,tree.index] if type(tree) == ns.NodeIndex else [tree.value,*tree.args] if type(tree) == ns.NodeCall else tree.children:
         explore(n,indent+'    ')
 
 if isinstance(tree,ns.ParseError):
