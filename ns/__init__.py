@@ -36,7 +36,7 @@ class Token:
         return self.t.isnumeric()
     
     def __str__( self ) -> str:
-        return 'Token<\x1b[33m%s\x1b[39m>'%(self.t,)
+        return 'Token<\x1b[33m%s\x1b[39m \x1b[35m%d\x1b[39m:\x1b[35m%d\x1b[39m>'%(self.t,self.l+1,self.c+1)
 
 class Tokens:
     source : Source
@@ -55,10 +55,10 @@ def tokenize(source:Source) -> Tokens:
     
     tmp = ''
     
-    def sep(i):
+    def sep(i,dooff=True):
         nonlocal tmp
         if len(tmp):
-            tokens.tokens.append(Token(tmp,c-len(tmp),l,i,source))
+            tokens.tokens.append(Token(tmp,c-(dooff*len(tmp)),l,i,source))
             tmp = ''
             
     for i,ch in enumerate(source.body):
@@ -110,7 +110,7 @@ def tokenize(source:Source) -> Tokens:
             elif ch in '.,:;\/+-*=!?()[]\{\}@#~^&\\|':
                 sep(i)
                 tmp = ch
-                sep(i)
+                sep(i,False)
             elif ch in '`\'"':
                 flags['str'] = {'opens':ch,'c':c,'l':l,'i':i}
             else:
@@ -124,11 +124,19 @@ def tokenize(source:Source) -> Tokens:
     
     return tokens
 
+class Enclosure:
+    start : Token
+    end   : str
+    
+    def __init__(self, start:Token, end:str):
+        self.start = start
+        self.end   = end
+
 class ParseContext:
     tokens  : Tokens
     ptr     : int
     node    : 'Node'
-    enclose : list[Token]
+    enclose : list[Enclosure]
     
     def __init__(self,tokens:Tokens,node:'Node',ptr:int=0):
         self.tokens = tokens
@@ -206,20 +214,31 @@ class NodeAccessColon( Node ):
         super().__init__(tokens,i,parent)
         self.node = node
         self.prop = prop
+        
+class NodeIndex( Node ):
+    node  : Node
+    index : 'NodeExpression'
+    
+    def __init__(self,tokens:Tokens,i:int,parent:Node,node:Node,index:str):
+        super().__init__(tokens,i,parent)
+        self.node = node
+        self.index = index
 
 class NodeExpression ( Node ):
-    n            : int
-    value        : Node
-    closeToken   : str
-    handleParent : bool
-    buffer       : list[Union[Node,Token]]
-    allowEmpty   : bool
+    n             : int
+    value         : Node
+    closeToken    : str
+    handleParent  : bool
+    buffer        : list[Union[Node,Token]]
+    allowEmpty    : bool
+    finishEnclose : Union[str,None]
     
-    def __init__(self,tokens:Tokens,i:int,parent:Node,closeToken:str,handleParent:bool=False,allowEmpty:bool=False):
+    def __init__(self,tokens:Tokens,i:int,parent:Node,closeToken:str,handleParent:bool=False,allowEmpty:bool=False,finishEnclose:Union[str,None]=None):
         super().__init__(tokens,i,parent)
         self.closeToken = closeToken
         self.handleParent = handleParent
         self.allowEmpty = allowEmpty
+        self.finishEnclose = finishEnclose
         self.n = 0
         self.value = None
         self.buffer = []
@@ -232,6 +251,11 @@ class NodeExpression ( Node ):
                 return ParseError.fromToken('Unexpected empty expression', token)
             if self.handleParent:
                 ctx.ptr -= 1
+            if self.finishEnclose:
+                if len(ctx.enclose) and ctx.enclose[-1].end == self.finishEnclose:
+                    ctx.enclose.pop()
+                else:
+                    return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
             ctx.node = self.parent
         elif len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
             a = self.buffer.pop()
@@ -248,8 +272,17 @@ class NodeExpression ( Node ):
                 else:
                     return ParseError.fromToken('Missing expression before `%s`'%(token.t,), token)
         elif token.t == '(':
-            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')',allowEmpty=True)
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')',allowEmpty=True,finishEnclose=')')
             self.buffer.append(ctx.node)
+            ctx.enclose.append(Enclosure(token,')'))
+        elif token.t == '[':
+            if len(self.buffer):
+                value = self.buffer.pop()
+                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,']',allowEmpty=False,finishEnclose=']')
+                self.buffer.append(NodeIndex(self.tokens,ctx.ptr,self,value,ctx.node))
+                ctx.enclose.append(Enclosure(token,']'))
+            else:
+                return ParseError.fromToken('Arrays are not supported yet', token)
         elif len(self.buffer) == 0:
             if token.isidentifier():
                 self.buffer.append(NodeName(self.tokens,ctx.ptr,self,token.t))
@@ -303,7 +336,6 @@ class NodeLet( Node ):
         self.n += 1
 
 class NodeBlock( Node ):
-    
     def __init__(self,tokens:Tokens,i:int,parent:Node):
         super().__init__(tokens,i,parent)
         
@@ -313,9 +345,9 @@ class NodeBlock( Node ):
         elif token.t == '{':
             ctx.node = NodeBlock(self.tokens,ctx.ptr,self)
             self.children.append(ctx.node)
-            ctx.enclose.append(token)
+            ctx.enclose.append(Enclosure(token,'}'))
         elif token.t == '}':
-            if self.parent and len(ctx.enclose) and ctx.enclose[-1].t == '{':
+            if self.parent and len(ctx.enclose) and ctx.enclose[-1].start.t == '{':
                 ctx.node = self.parent
                 ctx.enclose.pop()
             else:
@@ -336,7 +368,7 @@ def parse( tokens:Tokens ) -> Union[Node,ParseError]:
         if isinstance(err,ParseError): return err
         ctx.ptr += 1
     if len(ctx.enclose):
-        tk = ctx.enclose[0]
+        tk = ctx.enclose[0].start
         return ParseError.fromToken('Missmatched `%s`' % (tk.t,), tk)
     if root != ctx.node:
         tk = ctx.node.tokens.tokens[ctx.node.i]
