@@ -197,6 +197,15 @@ class NodeAccessDot( Node ):
         super().__init__(tokens,i,parent)
         self.node = node
         self.prop = prop
+        
+class NodeAccessColon( Node ):
+    node : Node
+    prop : str
+    
+    def __init__(self,tokens:Tokens,i:int,parent:Node,node:Node,prop:str):
+        super().__init__(tokens,i,parent)
+        self.node = node
+        self.prop = prop
 
 class NodeExpression ( Node ):
     n            : int
@@ -217,29 +226,29 @@ class NodeExpression ( Node ):
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
         if token.t == self.closeToken if type(self.closeToken) == str else token.t in self.closeToken:
-            if len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t == '.':
-                return ParseError.fromToken('Unexpected end of expression after `.`', token)
+            if len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
+                return ParseError.fromToken('Unexpected end of expression after `%s`'%(self.buffer[-1].t,), token)
             if not self.allowEmpty and len(self.buffer) == 0:
                 return ParseError.fromToken('Unexpected empty expression', token)
             if self.handleParent:
                 ctx.ptr -= 1
             ctx.node = self.parent
-        elif len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t == '.':
-            self.buffer.pop()
+        elif len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
+            a = self.buffer.pop()
             if not token.isidentifier():
-                return ParseError.fromToken('Unexpected token, expected identifier after `.`', token)
+                return ParseError.fromToken('Expected identifier after `%s`'%(a.t,), token)
             v = self.buffer.pop()
             self.buffer.append(NodeAccessDot(self.tokens,ctx.ptr,self,v,token.t))
-        elif token.t == '.':
-            if len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t == '.':
-                return ParseError.fromToken('Unexpected token, expected identifier after `.`', token)
+        elif token.t in ('.',':'):
+            if len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
+                return ParseError.fromToken('Unexpected token, expected identifier after `%s`'%(self.buffer[-1].t,), token)
             else:
                 if len(self.buffer) > 0:
                     self.buffer.append(token)
                 else:
-                    return ParseError.fromToken('Missing expression before `.`', token)
+                    return ParseError.fromToken('Missing expression before `%s`'%(token.t,), token)
         elif token.t == '(':
-            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')')
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')',allowEmpty=True)
             self.buffer.append(ctx.node)
         elif len(self.buffer) == 0:
             if token.isidentifier():
@@ -267,7 +276,7 @@ class NodeLet( Node ):
             if token.isidentifier():
                 self.name = token.t
             else:
-                return ParseError.fromToken('Invalid token, expected identifier', token)
+                return ParseError.fromToken('Expected identifier', token)
         elif self.n == 1:
             if token.t == '=':
                 ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,';',True)
@@ -277,12 +286,12 @@ class NodeLet( Node ):
             elif token.t == ';':
                 ctx.node = self.parent
             else:
-                return ParseError.fromToken('Invalid token, expected one of `=:;`', token)
+                return ParseError.fromToken('Expected one of `=:;`', token)
         elif self.n == 2:
             if token.t == ';':
                 ctx.node = self.parent
             else:
-                return ParseError.fromToken('Invalid token, expected `;`', token)
+                return ParseError.fromToken('Expected `;`', token)
         else:
             return ParseError.fromToken('Invalid syntax', token)
         self.n += 1
@@ -309,8 +318,9 @@ class NodeBlock( Node ):
             ctx.node = NodeLet(self.tokens,ctx.ptr,self)
             self.children.append(ctx.node)
         else:
-            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,';')
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,';',False,True)
             self.children.append(ctx.node)
+            ctx.ptr -= 1
         
 def parse( tokens:Tokens ) -> Union[Node,ParseError]:
     root = NodeBlock(tokens,0,None)
@@ -322,4 +332,7 @@ def parse( tokens:Tokens ) -> Union[Node,ParseError]:
     if len(ctx.enclose):
         tk = ctx.enclose[0]
         return ParseError.fromToken('Missmatched `%s`' % (tk.t,), tk)
+    if root != ctx.node:
+        tk = ctx.node.tokens.tokens[ctx.node.i]
+        return ParseError.fromToken('Unexpected end of input', tk)
     return root
