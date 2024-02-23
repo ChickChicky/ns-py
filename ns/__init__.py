@@ -379,7 +379,7 @@ class NodeString( Node ):
 
 class NodeAccessDot( Node ):
     """
-    `.` operator
+    `.` accessor
     """
     
     node : Node
@@ -392,7 +392,7 @@ class NodeAccessDot( Node ):
         
 class NodeAccessColon( Node ):
     """
-    `:` operator
+    `:` accessor
     """
     
     node : Node
@@ -667,7 +667,7 @@ class NodeLet( Node ):
                 else:
                     self.name = token.t
             else:
-                return ParseError.fromToken('Expected identifier or modifier', token)
+                return ParseError.fromToken('Expected an identifier', token)
         # Assignment, type hint or end of let statement
         elif self.n == 1:
             if token.t == '=':
