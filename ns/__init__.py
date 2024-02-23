@@ -245,6 +245,13 @@ class NodeNumber( Node ):
     def __init__( self, tokens:Tokens, i:int, parent:Node, value:Union[int,float,str] ):
         super().__init__(tokens,i,parent)
         self.value = float(value) if type(value) == str else value
+        
+class NodeString( Node ):
+    value : str
+    
+    def __init__(self,tokens:Tokens,i:int,parent:Node,value:str):
+        super().__init__(tokens,i,parent)
+        self.value = value
 
 class NodeAccessDot( Node ):
     """
@@ -434,6 +441,9 @@ class NodeExpression ( Node ):
                 ctx.enclose.append(Enclosure(token,']'))
             else:
                 return ParseError.fromToken('Arrays are not supported yet', token)
+        elif token.t == 'fn':
+            ctx.node = NodeFunction(self.tokens,ctx.ptr,self)
+            self.buffer.append(ctx.node)
         elif token.isidentifier():
             self.buffer.append(NodeName(self.tokens,ctx.ptr,self,token.t))
         elif token.isnumeric():
@@ -490,31 +500,139 @@ class NodeLet( Node ):
             return ParseError.fromToken('Invalid syntax', token)
         self.n += 1
 
-class NodeBlock( Node ):
-    def __init__( self, tokens:Tokens, i:int, parent:Node ):
+class FunctionParameter:
+    name    : str
+    type    : Union[NodeExpression,None]
+    default : Union[NodeExpression,None]
+    
+    def __init__(self, name:str, type_hint:Union[NodeExpression,None]=None, default:Union[NodeExpression,None]=None):
+        self.name = name
+        self.type = type_hint
+        self.default = default
+        
+class NodeReturn( Node ):
+    value : Union[NodeExpression,None]
+    
+    def __init__(self,tokens:Tokens,i:int,parent:Node):
         super().__init__(tokens,i,parent)
+        self.value = None
+        self.tmp = False
+    
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if token.t == ';':
+            ctx.node = self.parent
+        elif not self.tmp:
+            self.tmp = True
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,';',True)
+            self.value = ctx.node
+            ctx.ptr -= 1
+        else:
+            return ParseError.fromToken('Expected an expression or `;`', token)
+        
+class NodeFunction( Node ):
+    name         : Union[str,None]
+    body         : Union['NodeBlock',None]
+    modifiers    : set[str]
+    pararameters : list[FunctionParameter]
+    
+    def __init__(self, tokens:Tokens, i:int, parent:Node):
+        super().__init__(tokens,i,parent)
+        self.n = 0
+        self.buffer = {}
+        self.name = None
+        self.body = None
+        self.modifiers = set()
+        self.pararameters = []
+        
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if self.n == 0: # Function name + modifiers
+            if token.isidentifier():
+                if token.t in ('static','inline'):
+                    self.modifiers.add(token.t)
+                    self.n -= 1
+                else:
+                    self.name = token.t
+            elif token.t == '(':
+                self.name = None
+                ctx.ptr -= 1
+            else:
+                return ParseError.fromToken('Expected an identifier', token)
+        elif self.n == 1: # `(` before parameters
+            if token.t != '(':
+                return ParseError.fromToken('Expected `(`', token)
+        elif self.n == 2: # Parameters
+            if token.t == ')':
+                if len(self.buffer):
+                    self.pararameters.append(FunctionParameter(**self.buffer))
+                self.n += 1
+            elif token.t == ',':
+                if len(self.buffer):
+                    self.pararameters.append(FunctionParameter(**self.buffer))
+                    self.buffer = {}
+                else:
+                    return ParseError.fromToken('Expected parameter declaration', token)
+            elif 'name' not in self.buffer:
+                if token.isidentifier():
+                    self.buffer['name'] = token.t
+                else:
+                    return ParseError.fromToken('Expected an identifier or `)`', token)
+            elif 'type_hint' not in self.buffer:
+                if token.t == ':':
+                    return ParseError.fromToken('Type hints are not supported yet', token)
+                elif token.t == '=':
+                    self.buffer['type_hint'] = None
+                    ctx.ptr -= 1
+                else:
+                    return ParseError.fromToken('Expected one of `:=,)`', token)
+            elif 'default' not in self.buffer:
+                if token.t == '=':
+                    ctx.node = NodeExpression(self.tokens,ctx.ptr,self,(')',','),allowEmpty=False,handleParent=True)
+                    self.buffer['default'] = ctx.node
+                else:
+                    return ParseError.fromToken('Expected one of `=,)`', token)
+            else:
+                return ParseError.fromToken('Expected `,` or `)`', token)
+            self.n -= 1
+        elif self.n == 3: # Body
+            if token.t != '{':
+                return ParseError.fromToken('Expected `{`', token)
+            ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=True)
+            self.body = ctx.node
+            ctx.enclose.append(Enclosure(token,'}'))
+        elif self.n == 4:
+            ctx.node = self.parent
+        self.n += 1
+class NodeBlock( Node ):
+    handleParent: bool
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node, handleParent:bool=False ):
+        super().__init__(tokens,i,parent)
+        self.handleParent = handleParent
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
         if token.t == ';':
             pass
-        # New block
         elif token.t == '{':
             ctx.node = NodeBlock(self.tokens,ctx.ptr,self)
             self.children.append(ctx.node)
             ctx.enclose.append(Enclosure(token,'}'))
-        # End of blocks
         elif token.t == '}':
-            # Makes sure the last opened bracket matches up
             if self.parent and len(ctx.enclose) and ctx.enclose[-1].end == '}':
                 ctx.node = self.parent
                 ctx.enclose.pop()
+                if self.handleParent:
+                    ctx.ptr -= 1
             else:
                 return ParseError.fromToken('Missmatched `}`', token)
-        # New let statement
         elif token.t == 'let':
             ctx.node = NodeLet(self.tokens,ctx.ptr,self)
             self.children.append(ctx.node)
-        # New expression
+        elif token.t == 'fn':
+            ctx.node = NodeFunction(self.tokens,ctx.ptr,self)
+            self.children.append(ctx.node)
+        elif token.t == 'return':
+            ctx.node = NodeReturn(self.tokens,ctx.ptr,self)
+            self.children.append(ctx.node)
         else:
             ctx.node = NodeExpression(self.tokens,ctx.ptr,self,';',False,True)
             self.children.append(ctx.node)
