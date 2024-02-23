@@ -626,6 +626,10 @@ class NodeExpression ( Node ):
                 ctx.enclose.append(Enclosure(token,']'))
             else:
                 return ParseError.fromToken('Arrays are not supported yet', token)
+        elif token.t == '{':
+            ctx.node = NodeBlock(self.tokens,ctx.ptr,self)
+            self.buffer.append(ctx.node)
+            ctx.enclose.append(Enclosure(token,'}'))
         elif token.t == 'fn':
             ctx.node = NodeFunction(self.tokens,ctx.ptr,self)
             self.buffer.append(ctx.node)
