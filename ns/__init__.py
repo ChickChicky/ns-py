@@ -274,13 +274,34 @@ class NodeIndex( Node ):
     `[]` (index) operator
     """
     
-    value : Node             # the indexed value
-    index : 'NodeExpression' # the index expression
+    value : Node
+    index : list['NodeExpression']
+    sep   : Union[None,str]
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node, value:Node, index:str ):
+    def __init__( self, tokens:Tokens, i:int, parent:Node, value:Node ):
         super().__init__(tokens,i,parent)
         self.value = value
-        self.index = index
+        self.index = []
+        self.idx = None
+        self.sep = None
+        
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if token.t == ']':
+            if self.idx:
+                self.index.append(self.idx)
+            if len(ctx.enclose) and ctx.enclose[-1].end == token.t:
+                ctx.enclose.pop()
+            else:
+                return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
+            ctx.node = self.parent
+        elif token.t in (',',':'):
+            self.sep = self.sep or token.t
+            self.index.append(self.idx or NodeExpression(self.tokens,self.i,self,(*((self.sep,) if self.sep != None else (',',':')),']'),handleParent=True,allowEmpty=True))
+            self.idx = None
+        else:
+            ctx.node = NodeExpression(self.tokens,self.i,self,(*((self.sep,) if self.sep != None else (',',':')),']'),handleParent=True,allowEmpty=True)
+            self.idx = ctx.node
+            ctx.ptr -= 1
         
 class NodeCall( Node ):
     """
@@ -398,10 +419,9 @@ class NodeExpression ( Node ):
             # Indexing operator
             if len(self.buffer):
                 value = self.buffer.pop()
-                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,']',allowEmpty=False,finishEnclose=']')
-                self.buffer.append(NodeIndex(self.tokens,ctx.ptr,self,value,ctx.node))
+                ctx.node = NodeIndex(self.tokens,ctx.ptr,self,value)
+                self.buffer.append(ctx.node)
                 ctx.enclose.append(Enclosure(token,']'))
-            # New array
             else:
                 return ParseError.fromToken('Arrays are not supported yet', token)
         elif len(self.buffer) == 0:
