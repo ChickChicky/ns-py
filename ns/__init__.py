@@ -46,6 +46,9 @@ class Token:
     def isnumeric( self ) -> bool:
         return self.t.isnumeric()
     
+    def isstring( self ) -> bool:
+        return self.t.startswith('"') and self.t.endswith('"')
+    
     def __str__( self ) -> str:
         return 'Token<\x1b[33m%s\x1b[39m \x1b[35m%d\x1b[39m:\x1b[35m%d\x1b[39m>'%(self.t,self.l+1,self.c+1)
 
@@ -431,15 +434,14 @@ class NodeExpression ( Node ):
                 ctx.enclose.append(Enclosure(token,']'))
             else:
                 return ParseError.fromToken('Arrays are not supported yet', token)
-        elif len(self.buffer) == 0:
-            # Variable reference
-            if token.isidentifier():
-                self.buffer.append(NodeName(self.tokens,ctx.ptr,self,token.t))
-            # Number litteral
-            elif token.isnumeric():
-                self.buffer.append(NodeNumber(self.tokens,ctx.ptr,self,token.t))
-            else:
-                return ParseError.fromToken('Unexpected token', token)
+        elif token.isidentifier():
+            self.buffer.append(NodeName(self.tokens,ctx.ptr,self,token.t))
+        elif token.isnumeric():
+            self.buffer.append(NodeNumber(self.tokens,ctx.ptr,self,token.t))
+        elif token.isstring():
+            self.buffer.append(NodeString(self.tokens,ctx.ptr,self.tokens,token.t[1:-1]))
+        elif token.t in operatorTokens:
+            self.buffer.append(token)
         else:
             return ParseError.fromToken('Unexpected token', token)
 
