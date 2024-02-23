@@ -386,6 +386,13 @@ class NodeExpression ( Node ):
                     ctx.enclose.pop()
                 else:
                     return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
+            # Errors out if there are extra operators
+            for v in self.buffer:
+                if type(v) == Token:
+                    return ParseError.fromToken('Unexpected token', v)
+            # Errors out if there are multiple expressions inside of a single one
+            if len(self.buffer) > 1:
+                return ParseError.fromToken('Malformed expression', token)
             ctx.node = self.parent
         # Dot and colon accessor operators
         elif len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
@@ -396,10 +403,10 @@ class NodeExpression ( Node ):
             self.buffer.append(NodeAccessDot(self.tokens,ctx.ptr,self,v,token.t))
         # Dot and colon accessor operators
         elif token.t in ('.',':'):
-            if len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
-                return ParseError.fromToken('Esxpected identifier after `%s`'%(self.buffer[-1].t,), token)
+            if len(self.buffer) > 0 and type(self.buffer[-1]) == Token :
+                return ParseError.fromToken('Unexpected token', token)
             else:
-                if len(self.buffer) > 0 and type(self.buffer[-1]) != Token:
+                if len(self.buffer) > 0:
                     self.buffer.append(token)
                 else:
                     return ParseError.fromToken('Missing expression before `%s`'%(token.t,), token)
