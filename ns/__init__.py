@@ -64,7 +64,42 @@ class Tokens:
         self.source = source
         self.tokens = []
         
-def tokenize( source:Source ) -> Tokens:
+    def __str__(self) -> str:
+        return 'Tokens['+', '.join(map(str,self.tokens))+']'
+        
+compoundTokens = [
+    '...',
+    '>>=',
+    '<<=',
+    '&&=',
+    '||=',
+    '==',
+    '>=',
+    '<=',
+    '!=',
+    '&&',
+    '||',
+    '>>',
+    '<<',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '%=',
+    '^=',
+    '&=',
+    '|=',
+    '++',
+    '--',
+    '<>',
+    '<{',
+    '}>',
+    '->',
+    '=>',
+    '::',
+]
+
+def tokenize(source: Source) -> Tokens:
     """
     Retrieves tokens from the provided source
     """
@@ -82,8 +117,13 @@ def tokenize( source:Source ) -> Tokens:
         if len(tmp):
             tokens.tokens.append(Token(tmp,c-(dooff*len(tmp)),l,i,source))
             tmp = ''
-            
+    
+    skip = 0
     for i,ch in enumerate(source.body):
+        if skip > 0: 
+            c += 1
+            skip -= 1
+            continue
         if 'str' in flags:
             s = flags.get('str')
             esc: dict = s.get('esc')
@@ -127,16 +167,25 @@ def tokenize( source:Source ) -> Tokens:
                 else:
                     tmp += ch
         else:
-            if ch in ' \t\n':
-                sep(i)
-            elif ch in '.,:;\/+-*=!?()[]\{\}@#~^&\\|':
-                sep(i)
-                tmp = ch
-                sep(i,False)
-            elif ch in '`\'"':
-                flags['str'] = {'opens':ch,'c':c,'l':l,'i':i}
-            else:
-                tmp += ch
+            compound = False
+            for t in compoundTokens:
+                if source.body[i:i+len(t)] == t:
+                    sep(i)
+                    tmp = t
+                    sep(i,False)
+                    skip = len(t)-1
+                    compound = True
+            if not compound:
+                if ch in ' \t\n':
+                    sep(i)
+                elif ch in '.,:;\/+-*=!?()[]\{\}<>@#~^&\\|':
+                    sep(i)
+                    tmp = ch
+                    sep(i,False)
+                elif ch in '`\'"':
+                    flags['str'] = {'opens':ch,'c':c,'l':l,'i':i}
+                else:
+                    tmp += ch
         c += 1
         if ch == '\n':
             l += 1
