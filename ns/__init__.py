@@ -1,4 +1,4 @@
-from typing import Any, Union
+from typing import Any, Union, Literal
 
 class Source:
     """
@@ -98,6 +98,81 @@ compoundTokens = [
     '=>',
     '::',
 ]
+
+operators: list[dict[str,Union[Literal['prefix'],Literal['binary'],Literal['postfix']]]] = [
+    {
+        '++' : 'postfix',
+        '--' : 'postfix',
+    },
+    {
+        '++' : 'prefix',
+        '--' : 'prefix',
+        '&'  : 'prefix',
+        '*'  : 'prefix',
+        '+'  : 'prefix',
+        '-'  : 'prefix',
+        '!'  : 'prefix',
+        '~'  : 'prefix',
+    },
+    {
+        '*' : 'binary',
+        '/' : 'binary',
+        '%' : 'binary',
+    },
+    {
+        '+' : 'binary',
+        '-' : 'binary',
+    },
+    {
+        '>>' : 'binary',
+        '<<' : 'binary',
+    },
+    {
+        '==' : 'binary',
+        '!=' : 'binary',
+    },
+    {
+        '>'  : 'binary',
+        '>=' : 'binary',
+        '<=' : 'binary',
+        '<'  : 'binary',
+    },
+    {
+        '&' : 'binary',
+    },
+    {
+        '^' : 'binary',
+    },
+    {
+        '|' : 'binary',
+    },
+    {
+        '&&' : 'binary',
+    },
+    {
+        '||' : 'binary',
+    },
+    {
+        '='   : 'binary',
+        '+='  : 'binary', 
+        '-='  : 'binary', 
+        '*='  : 'binary', 
+        '/='  : 'binary', 
+        '%='  : 'binary', 
+        '^='  : 'binary', 
+        '&='  : 'binary', 
+        '|='  : 'binary', 
+        '&&=' : 'binary', 
+        '||=' : 'binary', 
+        '>>=' : 'binary', 
+        '<<=' : 'binary', 
+    },
+    {
+        '...' : 'prefix',
+    },
+]
+
+operatorTokens: list[str] = [t for p in operators for t in p.keys()]
 
 def tokenize(source: Source) -> Tokens:
     """
@@ -398,6 +473,35 @@ class NodeCall( Node ):
             # Makes sure that the expression also catches the first token
             ctx.ptr -= 1
 
+class NodeOperatorPrefix( Node ):
+    op    : Token
+    value : 'NodeExpression'
+    
+    def __init__(self,tokens:Tokens,i:int,parent:Node,op:Token,value:'NodeExpression'):
+        super().__init__(tokens,i,parent)
+        self.op = op
+        self.value = value
+    
+class NodeOperatorPostfix( Node ):
+    op    : Token
+    value : 'NodeExpression'
+    
+    def __init__(self,tokens:Tokens,i:int,parent:Node,op:Token,value:'NodeExpression'):
+        super().__init__(tokens,i,parent)
+        self.op = op
+        self.value = value
+
+class NodeOperatorBinary( Node ):
+    op    : Token
+    left  : 'NodeExpression'
+    right : 'NodeExpression'
+    
+    def __init__(self,tokens:Tokens,i:int,parent:Node,op:Token,right:'NodeExpression',left:'NodeExpression'):
+        super().__init__(tokens,i,parent)
+        self.op = op
+        self.left = left
+        self.right = right
+
 class NodeExpression ( Node ):
     """
     An expression
@@ -445,6 +549,36 @@ class NodeExpression ( Node ):
                     ctx.enclose.pop()
                 else:
                     return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
+            # 'Resolves' operators
+            for prec in operators:
+                ops = list(prec.keys())
+                i = 0
+                while i < len(self.buffer):
+                    v = self.buffer[i]
+                    if type(v) == Token and v.t in ops:
+                        kind = prec.get(v.t)
+                        if kind == 'prefix':
+                            if ((i == 0 or type(self.buffer[i-1]) == Token) and i < len(self.buffer)-1) and type(self.buffer[i+1]) != Token:
+                                op = self.buffer.pop(i)
+                                value = self.buffer.pop(i)
+                                self.buffer.insert(i,NodeOperatorPrefix(self.tokens,self.i,self,op,value))
+                                i = 0
+                        elif kind == 'binary':
+                            if i < len(self.buffer)-1 and i > 0 and type(self.buffer[i-1]) != Token and type(self.buffer[i+1]) != Token:
+                                left = self.buffer.pop(i-1)
+                                op = self.buffer.pop(i-1)
+                                right = self.buffer.pop(i-1)
+                                self.buffer.insert(i-1,NodeOperatorBinary(self.tokens,self.i,self,op,left,right))
+                                i = 0
+                        elif kind == 'postfix':
+                            if ((i == len(self.buffer)-1 or type(self.buffer[i+1]) == Token) and i > 0) and type(self.buffer[i-1]) != Token:
+                                value = self.buffer.pop(i-1)
+                                op = self.buffer.pop(i-1)
+                                self.buffer.insert(i-1,NodeOperatorPostfix(self.tokens,self.i,self,op,value))
+                                i = 0
+                        else:
+                            return ParseError.fromToken('Invalid operation', v)
+                    i += 1
             # Errors out if there are extra operators
             for v in self.buffer:
                 if type(v) == Token:
