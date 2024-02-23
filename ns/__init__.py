@@ -511,9 +511,9 @@ class NodeExpression ( Node ):
     value         : Node
     closeToken    : str
     handleParent  : bool
-    buffer        : list[Union[Node,Token]]
     allowEmpty    : bool
     finishEnclose : Union[str,None]
+    expression    : Union[Node,None]
     
     def __init__( self, tokens:Tokens, i:int, parent:Node, closeToken:str, handleParent:bool=False, allowEmpty:bool=False, finishEnclose:Union[str,None]=None ):
         """
@@ -530,6 +530,7 @@ class NodeExpression ( Node ):
         self.n = 0
         self.value = None
         self.buffer = []
+        self.expression = None
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
         # Checks if the current token is a closing token for the expressions
@@ -586,6 +587,7 @@ class NodeExpression ( Node ):
             # Errors out if there are multiple expressions inside of a single one
             if len(self.buffer) > 1:
                 return ParseError.fromToken('Malformed expression', token)
+            self.expr = self.buffer[0]
             ctx.node = self.parent
         # Dot and colon accessor operators
         elif len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
