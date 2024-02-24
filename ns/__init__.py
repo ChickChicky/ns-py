@@ -342,13 +342,11 @@ class Node:
     tokens   : Tokens
     i        : int
     parent   : 'Node'
-    children : list['Node']
     
     def __init__( self, tokens:Tokens, i:int, parent:'Node' ):
         self.tokens = tokens
         self.i = i
         self.parent = parent
-        self.children = []
         
     def feed( self, token:Token, _ctx:ParseContext ) -> Union[ParseError,None]:
         """
@@ -694,7 +692,7 @@ class NodeLet( Node ):
         elif self.n == 1:
             if token.t == '=':
                 ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,';',True)
-                self.children.append(ctx.node)
+                self.expr = ctx.node
             elif token.t == ':':
                 return ParseError.fromToken('Type hints are not supported yet', token)
             elif token.t == ';':
@@ -900,10 +898,12 @@ class NodeIf( Node ):
                 ctx.node = self.parent
 
 class NodeBlock( Node ):
-    handleParent: bool
+    handleParent : bool
+    children : list['Node']
     
     def __init__( self, tokens:Tokens, i:int, parent:Node, handleParent:bool=False ):
         super().__init__(tokens,i,parent)
+        self.children = []
         self.handleParent = handleParent
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
