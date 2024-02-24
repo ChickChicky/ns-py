@@ -541,9 +541,6 @@ class NodeExpression ( Node ):
             # Checks for empty expression
             if not self.allowEmpty and len(self.buffer) == 0:
                 return ParseError.fromToken('Unexpected empty expression', token)
-            # Moves the pointer back in case of a handling parent so that it will also receive the closing token
-            if self.handleParent:
-                ctx.ptr -= 1
             # Checks for surrounding brackets
             if self.finishEnclose:
                 if len(ctx.enclose) and ctx.enclose[-1].end == self.finishEnclose:
@@ -587,7 +584,10 @@ class NodeExpression ( Node ):
             # Errors out if there are multiple expressions inside of a single one
             if len(self.buffer) > 1:
                 return ParseError.fromToken('Malformed expression', token)
-            self.expr = self.buffer[0]
+            # Moves the pointer back in case of a handling parent so that it will also receive the closing token
+            if self.handleParent:
+                ctx.ptr -= 1
+            self.expr = self.buffer[0] if len(self.buffer) else None
             ctx.node = self.parent
         # Dot and colon accessor operators
         elif len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
