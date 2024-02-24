@@ -23,6 +23,10 @@ class Source:
         return Source(path,body)
     
 class TokenEOF(str):
+    """
+    Used as the text of the token appended at the end of `tokenize`
+    """
+    
     def __init__(self):pass
     def __str__(self):return'<EOF>'
     def __repr__(self):return'<EOF>'
@@ -367,7 +371,7 @@ class NodeName( Node ):
 
 class NodeNumber( Node ):
     """
-    Number litteral
+    Number literal
     """
     
     value : Union[int,float]
@@ -377,6 +381,10 @@ class NodeNumber( Node ):
         self.value = float(value) if type(value) == str else value
         
 class NodeString( Node ):
+    """
+    String literal
+    """
+    
     value : str
     
     def __init__(self,tokens:Tokens,i:int,parent:Node,value:str):
@@ -484,6 +492,10 @@ class NodeCall( Node ):
             ctx.ptr -= 1
 
 class NodeOperatorPrefix( Node ):
+    """
+    Prefix operator
+    """
+    
     op    : Token
     value : 'NodeExpression'
     
@@ -493,6 +505,10 @@ class NodeOperatorPrefix( Node ):
         self.value = value
     
 class NodeOperatorPostfix( Node ):
+    """
+    Postfix / Suffix operator
+    """
+    
     op    : Token
     value : 'NodeExpression'
     
@@ -502,6 +518,10 @@ class NodeOperatorPostfix( Node ):
         self.value = value
 
 class NodeOperatorBinary( Node ):
+    """
+    Binary operator
+    """
+    
     op    : Token
     left  : 'NodeExpression'
     right : 'NodeExpression'
@@ -516,9 +536,7 @@ class NodeExpression ( Node ):
     """
     An expression
     """
-    
-    n             : int
-    value         : Node
+
     closeToken    : str
     handleParent  : bool
     allowEmpty    : bool
@@ -538,7 +556,6 @@ class NodeExpression ( Node ):
         self.allowEmpty = allowEmpty
         self.finishEnclose = finishEnclose
         self.n = 0
-        self.value = None
         self.buffer = []
         self.expression = None
         
@@ -573,9 +590,9 @@ class NodeExpression ( Node ):
                                 i = 0
                         elif kind == 'binary':
                             if i < len(self.buffer)-1 and i > 0 and type(self.buffer[i-1]) != Token and type(self.buffer[i+1]) != Token:
-                                left = self.buffer.pop(i-1)
-                                op = self.buffer.pop(i-1)
                                 right = self.buffer.pop(i-1)
+                                op = self.buffer.pop(i-1)
+                                left = self.buffer.pop(i-1)
                                 self.buffer.insert(i-1,NodeOperatorBinary(self.tokens,self.i,self,op,left,right))
                                 i = 0
                         elif kind == 'postfix':
@@ -597,7 +614,7 @@ class NodeExpression ( Node ):
             # Moves the pointer back in case of a handling parent so that it will also receive the closing token
             if self.handleParent:
                 ctx.ptr -= 1
-            self.expr = self.buffer[0] if len(self.buffer) else None
+            self.expression = self.buffer[0] if len(self.buffer) else None
             ctx.node = self.parent
         # Dot and colon accessor operators
         elif len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
