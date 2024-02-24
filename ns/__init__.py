@@ -22,6 +22,12 @@ class Source:
             body = file.read().replace('\r\n','\n')
         return Source(path,body)
     
+class TokenEOF(str):
+    def __init__(self):pass
+    def __str__(self):return'<EOF>'
+    def __repr__(self):return'<EOF>'
+    pass
+    
 class Token:
     """
     Represents a single token
@@ -33,7 +39,7 @@ class Token:
     i : int
     s : Source
     
-    def __init__( self, t:int, c:int, l:int, i:int, s:Source ):
+    def __init__( self, t:str, c:int, l:int, i:int, s:Source ):
         self.t = t
         self.c = c
         self.l = l
@@ -268,6 +274,8 @@ def tokenize(source: Source) -> Tokens:
     
     sep(len(source.body))
     
+    tokens.tokens.append(Token(TokenEOF(),c,l,i,source))
+    
     return tokens
 
 class Enclosure:
@@ -420,6 +428,8 @@ class NodeIndex( Node ):
         self.sep = None
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if type(token.t) == TokenEOF:
+            return ParseError.fromToken('Unexpected EOF', token)
         if token.t == ']':
             if self.idx:
                 self.index.append(self.idx)
@@ -452,6 +462,8 @@ class NodeCall( Node ):
         self.arg = None
 
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if type(token.t) == TokenEOF:
+            return ParseError.fromToken('Unexpected EOF', token)
         if token.t == ')':
             # Adds the last argument to the arguments list (if any)
             if self.arg:
@@ -533,6 +545,7 @@ class NodeExpression ( Node ):
         self.expression = None
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        print('hm',token,repr(self.closeToken))
         # Checks if the current token is a closing token for the expressions
         if token.t == self.closeToken if type(self.closeToken) == str else token.t in self.closeToken:
             # Checks for unfinished accessor operators
@@ -630,8 +643,14 @@ class NodeExpression ( Node ):
             ctx.node = NodeBlock(self.tokens,ctx.ptr,self)
             self.buffer.append(ctx.node)
             ctx.enclose.append(Enclosure(token,'}'))
+        elif token.t == '<{':
+            return ParseError.fromToken('Objects are not supported yet', token)
+            ctx.enclose.append(Enclosure(token,'}>'))
         elif token.t == 'fn':
             ctx.node = NodeFunction(self.tokens,ctx.ptr,self)
+            self.buffer.append(ctx.node)
+        elif token.t == 'if':
+            ctx.node = NodeIf(self.tokens,ctx.ptr,self,(*((self.closeToken,) if type(self.closeToken) == str else self.closeToken),),handleParent=True,inBlock=False)
             self.buffer.append(ctx.node)
         elif token.isidentifier():
             self.buffer.append(NodeName(self.tokens,ctx.ptr,self,token.t))
@@ -641,6 +660,8 @@ class NodeExpression ( Node ):
             self.buffer.append(NodeString(self.tokens,ctx.ptr,self.tokens,token.t[1:-1]))
         elif token.t in operatorTokens:
             self.buffer.append(token)
+        elif type(token.t) == TokenEOF:
+            return ParseError.fromToken('Unexpected EOF', token)
         else:
             return ParseError.fromToken('Unexpected token', token)
 
@@ -658,6 +679,8 @@ class NodeLet( Node ):
         self.modifiers = set()
     
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if type(token.t) == TokenEOF:
+            return ParseError.fromToken('Unexpected EOF', token)
         # Name or modifier
         if self.n == 0:
             if token.isidentifier():
@@ -708,6 +731,8 @@ class NodeReturn( Node ):
         self.tmp = False
     
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if type(token.t) == TokenEOF:
+            return ParseError.fromToken('Unexpected EOF', token)
         if token.t == ';':
             ctx.node = self.parent
         elif not self.tmp:
@@ -734,6 +759,8 @@ class NodeFunction( Node ):
         self.pararameters = []
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if type(token.t) == TokenEOF:
+            return ParseError.fromToken('Unexpected EOF', token)
         if self.n == 0: # Function name + modifiers
             if token.isidentifier():
                 if token.t in ('static','inline'):
@@ -791,6 +818,88 @@ class NodeFunction( Node ):
         elif self.n == 4:
             ctx.node = self.parent
         self.n += 1
+
+class NodeIf( Node ):
+    condition  : NodeExpression
+    expression : Union[NodeExpression,'NodeBlock']
+    otherwise  : Union[NodeExpression,'NodeBlock',None]
+    
+    def __init__ (self, tokens:Tokens, i:int, parent:Node, closeTokens:list[str]=None, handleParent:bool=False, inBlock:bool=True ):
+        super().__init__(tokens,i,parent)
+        self.closeTokens = closeTokens
+        self.handleParent = handleParent
+        self.inBlock = inBlock
+        self.condition = None
+        self.expression = None
+        self.otherwise = None
+        
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if self.inBlock:
+            if self.condition == None:
+                if token.t == '(':
+                    ctx.node = NodeExpression(self.tokens,self.i,self,')',handleParent=True,allowEmpty=False,finishEnclose=')')
+                    self.condition = ctx.node
+                    ctx.enclose.append(Enclosure(token,')'))
+                else:
+                    return ParseError.fromToken('Expected `(`', token)
+            elif self.expression == None:
+                if token.t == ')':
+                    self.expression = False
+                else:
+                    return ParseError.fromToken('Expected `)`', token)
+            elif self.expression == False:
+                if token.t == '{':
+                    ctx.node = NodeBlock(self.tokens,self.i,self,handleParent=False)
+                    ctx.enclose.append(Enclosure(token,'}'))
+                else:
+                    ctx.node = NodeExpression(self.tokens,self.i,self,';',handleParent=False,allowEmpty=True)
+                    ctx.ptr -= 1
+                self.expression = ctx.node
+            elif self.otherwise == None:
+                if token.t == 'else':
+                    self.otherwise = False
+                else:
+                    ctx.node = self.parent
+                    ctx.ptr -= 1
+            elif self.otherwise == False:
+                if token.t == '{':
+                    ctx.node = NodeBlock(self.tokens,self.i,self,handleParent=False)
+                    ctx.enclose.append(Enclosure(token,'}'))
+                elif token.t == 'if':
+                    ctx.node = NodeIf(self.tokens,ctx.ptr,self,inBlock=True)
+                    self.children.append(ctx.node)
+                else:
+                    ctx.node = NodeExpression(self.tokens,self.i,self,';',handleParent=False,allowEmpty=True)
+                    ctx.ptr -= 1
+                self.otherwise = ctx.node
+            else:
+                ctx.ptr -= 1
+                ctx.node = self.parent
+        else:
+            if self.condition == None:
+                if token.t == '(':
+                    ctx.node = NodeExpression(self.tokens,self.i,self,')',handleParent=True,allowEmpty=False,finishEnclose=')')
+                    self.condition = ctx.node
+                    ctx.enclose.append(Enclosure(token,')'))
+                else:
+                    return ParseError.fromToken('Expected `(`', token)
+            elif self.expression == None:
+                if token.t == ')':
+                    ctx.node = NodeExpression(self.tokens,self.i,self,'else',handleParent=True,allowEmpty=False)
+                    self.expression = ctx.node
+                else:
+                    return ParseError.fromToken('Expected `)`', token)
+            elif self.otherwise == None:
+                if token.t == 'else':
+                    ctx.node = NodeExpression(self.tokens,self.i,self,self.closeTokens,handleParent=True,allowEmpty=False)
+                    self.otherwise = ctx.node
+                else:
+                    return ParseError.fromToken('Expected `else`', token)
+            else:
+                if self.handleParent:
+                    ctx.ptr -= 1
+                ctx.node = self.parent
+
 class NodeBlock( Node ):
     handleParent: bool
     
@@ -816,12 +925,18 @@ class NodeBlock( Node ):
         elif token.t == 'let':
             ctx.node = NodeLet(self.tokens,ctx.ptr,self)
             self.children.append(ctx.node)
+        elif token.t == 'if':
+            ctx.node = NodeIf(self.tokens,ctx.ptr,self,inBlock=True)
+            self.children.append(ctx.node)
         elif token.t == 'fn':
             ctx.node = NodeFunction(self.tokens,ctx.ptr,self)
             self.children.append(ctx.node)
         elif token.t == 'return':
             ctx.node = NodeReturn(self.tokens,ctx.ptr,self)
             self.children.append(ctx.node)
+        elif type(token.t) == TokenEOF:
+            if self.parent != None:
+                return ParseError.fromToken('Unexpected EOF', token)
         else:
             ctx.node = NodeExpression(self.tokens,ctx.ptr,self,';',False,True)
             self.children.append(ctx.node)
