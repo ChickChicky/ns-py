@@ -545,7 +545,6 @@ class NodeExpression ( Node ):
         self.expression = None
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
-        print('hm',token,repr(self.closeToken))
         # Checks if the current token is a closing token for the expressions
         if token.t == self.closeToken if type(self.closeToken) == str else token.t in self.closeToken:
             # Checks for unfinished accessor operators
