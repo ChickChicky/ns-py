@@ -539,6 +539,19 @@ class NodeOperatorBinary( Node ):
         self.op = op
         self.left = left
         self.right = right
+        
+class NodeCast( Node ):
+    """
+    `... <> ...` (type cast) operator
+    """
+    
+    value : 'NodeExpression'
+    type  : 'NodeTypeHint'
+    
+    def __init__(self,tokens:Tokens,i:int,parent:Node,value:'NodeExpression',cast:'NodeTypeHint'):
+        super().__init__(tokens,i,parent)
+        self.value = value
+        self.type = cast
 
 class NodeExpression ( Node ):
     """
@@ -674,6 +687,13 @@ class NodeExpression ( Node ):
         elif token.t == 'if':
             ctx.node = NodeIf(self.tokens,ctx.ptr,self,(*((self.closeToken,) if type(self.closeToken) == str else self.closeToken),),handleParent=True,inBlock=False)
             self.buffer.append(ctx.node)
+        elif token.t == '<>':
+            if len(self.buffer) and type(self.buffer[-1]) != Token:
+                value = self.buffer.pop()
+                ctx.node = NodeTypeHint(self.tokens,ctx.ptr,self,self.closeToken,handleParent=True,allowEmpty=False)
+                self.buffer.append(NodeCast(self.tokens,ctx.ptr,self,value,ctx.node))
+            else:
+                return ParseError.fromToken('Expected expression before type cast', token)
         elif token.isidentifier():
             self.buffer.append(NodeName(self.tokens,ctx.ptr,self,token.t))
         elif token.isnumeric():
@@ -746,7 +766,6 @@ class NodeTypeHint( Node ):
         self.expression = None
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
-        print(repr(self.closeToken),token)
         # Checks if the current token is a closing token for the type hint
         if token.t == self.closeToken if type(self.closeToken) == str else token.t in self.closeToken:
             # Checks for unfinished accessor operators
@@ -1143,7 +1162,6 @@ def parse( tokens:Tokens ) -> Union[Node,ParseError]:
     ctx = ParseContext( tokens, root, 0 ) # the parsing context
     while ctx.ptr < len(ctx.tokens.tokens):
         # feeds the current node with the current token
-        print(ctx.node)
         err = ctx.node.feed( ctx.tokens.tokens[ctx.ptr], ctx )
         # returns an error if the parsing resulted in one
         if isinstance(err,ParseError): return err
