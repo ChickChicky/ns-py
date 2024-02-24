@@ -866,7 +866,7 @@ class NodeIf( Node ):
                     ctx.enclose.append(Enclosure(token,'}'))
                 elif token.t == 'if':
                     ctx.node = NodeIf(self.tokens,ctx.ptr,self,inBlock=True)
-                    self.children.append(ctx.node)
+                    self.otherwise = ctx.node
                 else:
                     ctx.node = NodeExpression(self.tokens,self.i,self,';',handleParent=False,allowEmpty=True)
                     ctx.ptr -= 1
@@ -937,7 +937,7 @@ class NodeBlock( Node ):
             if self.parent != None:
                 return ParseError.fromToken('Unexpected EOF', token)
         else:
-            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,';',False,True)
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,(';','}'),handleParent=True,allowEmpty=True)
             self.children.append(ctx.node)
             ctx.ptr -= 1
         
