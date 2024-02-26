@@ -26,7 +26,7 @@ def explore(tree) -> str:
     if isinstance(tree,(ns.Node,ns.FunctionParameter)):
         s = '\x1b[1;7m'+tree.__class__.__name__+'\x1b[m { '
         props = {}
-        props.update(dict(map(lambda k:(k,getattr(tree,k)),tree.__annotations__)))
+        props.update(dict(map(lambda k:(k,getattr(tree,k) if hasattr(tree,k) else None),tree.__annotations__)))
         if len(props) > 1: s += '\n'
         for k,v in props.items():
             t = ''
