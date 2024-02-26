@@ -1113,6 +1113,39 @@ class NodeIf( Node ):
                     ctx.ptr -= 1
                 ctx.node = self.parent
 
+class NodeWhile( Node ):
+    """
+    A while loop
+    """
+    
+    condition : NodeExpression
+    body      : 'NodeBlock'
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node ):
+        super().__init__(tokens,i,parent)
+        self.condition = None
+        self.body = None
+        
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if self.condition == None:
+            if token.t == '(':
+                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,(')',),handleParent=False,allowEmpty=False,finishEnclose=')')
+                self.condition = ctx.node
+                ctx.enclose.append(Enclosure(token,')'))
+            else:
+                return ParseError.fromToken('Expected `(` before condition', token)
+        elif self.body == None:
+            if token.t == '{':
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=False)
+                self.body = ctx.node
+                ctx.enclose.append(Enclosure(token,'}'))
+            else:
+                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,(';',),handleParent=False,allowEmpty=True)
+                self.body = ctx.node
+                ctx.ptr -= 1
+        else:
+            ctx.node = self.parent
+
 class NodeBlock( Node ):
     handleParent : bool
     children : list['Node']
@@ -1148,6 +1181,9 @@ class NodeBlock( Node ):
             self.children.append(ctx.node)
         elif token.t == 'return':
             ctx.node = NodeReturn(self.tokens,ctx.ptr,self)
+            self.children.append(ctx.node)
+        elif token.t == 'while':
+            ctx.node = NodeWhile(self.tokens,ctx.ptr,self)
             self.children.append(ctx.node)
         elif type(token.t) == TokenEOF:
             if self.parent != None:
