@@ -354,11 +354,13 @@ class Node:
     tokens   : Tokens
     i        : int
     parent   : 'Node'
+    flags    : tuple[str]
     
-    def __init__( self, tokens:Tokens, i:int, parent:'Node' ):
+    def __init__( self, tokens:Tokens, i:int, parent:'Node', flags:tuple[str] ):
         self.tokens = tokens
         self.i = i
         self.parent = parent
+        self.flags = flags
         
     def feed( self, token:Token, _ctx:ParseContext ) -> Union[ParseError,None]:
         """
@@ -373,8 +375,8 @@ class NodeName( Node ):
     
     name : str
     
-    def __init__(self,tokens:Tokens,i:int,parent:Node,name:str):
-        super().__init__(tokens,i,parent)
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], name:str ):
+        super().__init__(tokens,i,parent,flags)
         self.name = name
 
 class NodeNumber( Node ):
@@ -407,8 +409,8 @@ class NodeAccessDot( Node ):
     node : Node
     prop : str
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node, node:Node, prop:str ):
-        super().__init__(tokens,i,parent)
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], node:Node, prop:str ):
+        super().__init__(tokens,i,parent,flags)
         self.node = node
         self.prop = prop
         
@@ -490,11 +492,11 @@ class NodeCall( Node ):
             ctx.node = self.parent
         # Adds the previous argument to the argument list, allowing empty arguments
         elif token.t == ',':
-            self.args.append(self.arg or NodeExpression(self.tokens,self.i,self,(',',')'),handleParent=True,allowEmpty=True))
+            self.args.append(self.arg or NodeExpression(self.tokens,self.i,self,self.flags,(',',')'),handleParent=True,allowEmpty=True))
             self.arg = None
         # Creates a new argument
         else:
-            ctx.node = NodeExpression(self.tokens,self.i,self,(',',')'),handleParent=True,allowEmpty=True)
+            ctx.node = NodeExpression(self.tokens,self.i,self,self.flags,(',',')'),handleParent=True,allowEmpty=True)
             self.arg = ctx.node
             # Makes sure that the expression also catches the first token
             ctx.ptr -= 1
@@ -534,8 +536,8 @@ class NodeOperatorBinary( Node ):
     left  : 'NodeExpression'
     right : 'NodeExpression'
     
-    def __init__(self,tokens:Tokens,i:int,parent:Node,op:Token,right:'NodeExpression',left:'NodeExpression'):
-        super().__init__(tokens,i,parent)
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], op:Token, right:'NodeExpression', left:'NodeExpression' ):
+        super().__init__(tokens,i,parent,flags)
         self.op = op
         self.left = left
         self.right = right
@@ -560,14 +562,14 @@ class NodeExpression ( Node ):
     
     expression    : Union[Node,None]
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node, closeToken:tuple[str], handleParent:bool=False, allowEmpty:bool=False, finishEnclose:Union[str,None]=None ):
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], closeToken:tuple[str], handleParent:bool=False, allowEmpty:bool=False, finishEnclose:Union[str,None]=None ):
         """
         :param str closeToken: A string or list of string that should be used to close the expression
         :param bool handleParent: Whether the parsing should resume after (False) or at (True) the enclosing token
         :param bool allowEmpty: Whether the expression is allowed to be empty
         :param Union[str,None] finishEnclose: In the case of an expression that has a matching bracket, specifies the expected closing token
         """
-        super().__init__(tokens,i,parent)
+        super().__init__(tokens,i,parent,flags)
         self.closeToken = closeToken
         self.handleParent = handleParent
         self.allowEmpty = allowEmpty
@@ -610,7 +612,7 @@ class NodeExpression ( Node ):
                                 right = self.buffer.pop(i-1)
                                 op = self.buffer.pop(i-1)
                                 left = self.buffer.pop(i-1)
-                                self.buffer.insert(i-1,NodeOperatorBinary(self.tokens,self.i,self,op,left,right))
+                                self.buffer.insert(i-1,NodeOperatorBinary(self.tokens,self.i,self,self.flags,op,left,right))
                                 i = 0
                         elif kind == 'postfix':
                             if ((i == len(self.buffer)-1 or type(self.buffer[i+1]) == Token) and i > 0) and type(self.buffer[i-1]) != Token:
@@ -638,14 +640,14 @@ class NodeExpression ( Node ):
             a = self.buffer.pop()
             if not token.isidentifier():
                 return ParseError.fromToken('Expected identifier after `%s`'%(a.t,), token)
-            v = self.buffer.pop()
-            self.buffer.append(NodeAccessDot(self.tokens,ctx.ptr,self,v,token.t))
+            v = None if len(self.buffer) == 0 else self.buffer.pop()
+            self.buffer.append(NodeAccessDot(self.tokens,ctx.ptr,self,self.flags,v,token.t))
         # Dot and colon accessor operators
         elif token.t in ('.',':'):
             if len(self.buffer) > 0 and type(self.buffer[-1]) == Token :
                 return ParseError.fromToken('Unexpected token', token)
             else:
-                if len(self.buffer) > 0:
+                if len(self.buffer) > 0 or token.t == '.':
                     self.buffer.append(token)
                 else:
                     return ParseError.fromToken('Missing expression before `%s`'%(token.t,), token)
@@ -658,12 +660,12 @@ class NodeExpression ( Node ):
                 ctx.enclose.append(Enclosure(token,')'))
             # New expression
             else:
-                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')',allowEmpty=True,finishEnclose=')')
+                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,self.flags,')',allowEmpty=True,finishEnclose=')')
                 self.buffer.append(ctx.node)
                 ctx.enclose.append(Enclosure(token,')'))
         elif token.t == '[':
             # Indexing operator
-            if len(self.buffer):
+            if len(self.buffer) and not isinstance(self.buffer[-1],Token):
                 value = self.buffer.pop()
                 ctx.node = NodeIndex(self.tokens,ctx.ptr,self,value)
                 self.buffer.append(ctx.node)
@@ -671,9 +673,15 @@ class NodeExpression ( Node ):
             else:
                 return ParseError.fromToken('Arrays are not supported yet', token)
         elif token.t == '{':
-            ctx.node = NodeBlock(self.tokens,ctx.ptr,self)
-            self.buffer.append(ctx.node)
-            ctx.enclose.append(Enclosure(token,'}'))
+            if len(self.buffer) and isinstance(self.buffer[-1],NodeName):
+                struct = self.buffer.pop()
+                ctx.node = NodeConstructor(self.tokens,ctx.ptr,self,self.flags,struct)
+                self.buffer.append(ctx.node)
+                ctx.ptr -= 1
+            else:
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags)
+                self.buffer.append(ctx.node)
+                ctx.enclose.append(Enclosure(token,'}'))
         elif token.t == '<{':
             return ParseError.fromToken('Objects are not supported yet', token)
             ctx.enclose.append(Enclosure(token,'}>'))
@@ -686,12 +694,12 @@ class NodeExpression ( Node ):
         elif token.t == '<>':
             if len(self.buffer) and type(self.buffer[-1]) != Token:
                 value = self.buffer.pop()
-                ctx.node = NodeTypeHint(self.tokens,ctx.ptr,self,self.closeToken,handleParent=True,allowEmpty=False)
+                ctx.node = NodeTypeHint(self.tokens,ctx.ptr,self,self.flags,self.closeToken,handleParent=True,allowEmpty=False)
                 self.buffer.append(NodeCast(self.tokens,ctx.ptr,self,value,ctx.node))
             else:
                 return ParseError.fromToken('Expected expression before type cast', token)
         elif token.isidentifier():
-            self.buffer.append(NodeName(self.tokens,ctx.ptr,self,token.t))
+            self.buffer.append(NodeName(self.tokens,ctx.ptr,self,self.flags,token.t))
         elif token.isnumeric():
             self.buffer.append(NodeNumber(self.tokens,ctx.ptr,self,token.t))
         elif token.isstring():
@@ -729,10 +737,10 @@ class NodeTypeGeneric( Node ):
                 return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
             ctx.node = self.parent
         elif token.t == ',':
-            self.args.append(self.idx or NodeTypeHint(self.tokens,self.i,self,(',','>'),handleParent=True,allowEmpty=True))
+            self.args.append(self.idx or NodeTypeHint(self.tokens,self.i,self,self.flags,(',','>'),handleParent=True,allowEmpty=True))
             self.idx = None
         else:
-            ctx.node = NodeTypeHint(self.tokens,self.i,self,(',','>'),handleParent=True,allowEmpty=True)
+            ctx.node = NodeTypeHint(self.tokens,self.i,self,self.flags,(',','>'),handleParent=True,allowEmpty=True)
             self.idx = ctx.node
             ctx.ptr -= 1
         
@@ -743,13 +751,13 @@ class NodeTypeHint( Node ):
 
     expression    : Union[Node,None]
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node, closeToken:tuple[str], handleParent:bool=False, allowEmpty:bool=False, finishEnclose:Union[str,None]=None ):
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], closeToken:tuple[str], handleParent:bool=False, allowEmpty:bool=False, finishEnclose:Union[str,None]=None ):
         """
         :param str closeToken: A string or list of string that should be used to close the type hint
         :param bool handleParent: Whether the parsing should resume after (False) or at (True) the enclosing token
         :param bool allowEmpty: Whether the type hint is allowed to be empty
         """
-        super().__init__(tokens,i,parent)
+        super().__init__(tokens,i,parent,flags)
         self.closeToken = closeToken
         self.handleParent = handleParent
         self.allowEmpty = allowEmpty
@@ -792,7 +800,7 @@ class NodeTypeHint( Node ):
                                 right = self.buffer.pop(i-1)
                                 op = self.buffer.pop(i-1)
                                 left = self.buffer.pop(i-1)
-                                self.buffer.insert(i-1,NodeOperatorBinary(self.tokens,self.i,self,op,left,right))
+                                self.buffer.insert(i-1,NodeOperatorBinary(self.tokens,self.i,self,self.flags,op,left,right))
                                 i = 0
                         elif kind == 'postfix':
                             if ((i == len(self.buffer)-1 or type(self.buffer[i+1]) == Token) and i > 0) and type(self.buffer[i-1]) != Token:
@@ -835,7 +843,7 @@ class NodeTypeHint( Node ):
             self.tokens.splitToken(token)
             ctx.ptr -= 1
         elif token.t == '(':
-            ctx.node = NodeTypeHint(self.tokens,ctx.ptr,self,')',allowEmpty=True,finishEnclose=')')
+            ctx.node = NodeTypeHint(self.tokens,ctx.ptr,self,self.flags,')',allowEmpty=True,finishEnclose=')')
             self.buffer.append(ctx.node)
             ctx.enclose.append(Enclosure(token,')'))
         elif token.t == '[':
@@ -849,11 +857,11 @@ class NodeTypeHint( Node ):
             else:
                 return ParseError.fromToken('Expected expression before generic arguments', token)
         elif token.isidentifier():
-            self.buffer.append(NodeName(self.tokens,ctx.ptr,self,token.t))
+            self.buffer.append(NodeName(self.tokens,ctx.ptr,self,self.flags,token.t))
         elif token.isnumeric():
-            self.buffer.append(NodeNumber(self.tokens,ctx.ptr,self,token.t))
+            self.buffer.append(NodeNumber(self.tokens,ctx.ptr,self,self.flags,token.t))
         elif token.isstring():
-            self.buffer.append(NodeString(self.tokens,ctx.ptr,self.tokens,token.t[1:-1]))
+            self.buffer.append(NodeString(self.tokens,ctx.ptr,self,self.tokens,token.t[1:-1]))
         elif token.t in operatorTokens:
             self.buffer.append(token)
         elif type(token.t) == TokenEOF:
@@ -871,8 +879,8 @@ class NodeLet( Node ):
     modifiers : set[str]
     type      : Union[NodeTypeHint,None]
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node ):
-        super().__init__(tokens,i,parent)
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str] ):
+        super().__init__(tokens,i,parent,flags)
         self.n = 0
         self.name = None
         self.expr = None
@@ -894,10 +902,10 @@ class NodeLet( Node ):
         # Assignment, type hint or end of let statement
         elif self.n == 1:
             if token.t == '=':
-                ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,';',True)
+                ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,self.flags,';',True)
                 self.expr = ctx.node
             elif token.t == ':':
-                ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,(';','='),True)
+                ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,self.flags,(';','='),True)
                 self.type = ctx.node
                 self.n -= 1
             elif token.t == ';':
@@ -927,8 +935,8 @@ class FunctionParameter:
 class NodeReturn( Node ):
     value : Union[NodeExpression,None]
     
-    def __init__(self,tokens:Tokens,i:int,parent:Node):
-        super().__init__(tokens,i,parent)
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str] ):
+        super().__init__(tokens,i,parent,flags)
         self.value = None
         self.tmp = False
     
@@ -939,7 +947,7 @@ class NodeReturn( Node ):
             ctx.node = self.parent
         elif not self.tmp:
             self.tmp = True
-            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,';',True)
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,self.flags,';',True)
             self.value = ctx.node
             ctx.ptr -= 1
         else:
@@ -952,8 +960,8 @@ class NodeFunction( Node ):
     pararameters : list[FunctionParameter]
     type         : Union[NodeTypeHint,None]
     
-    def __init__(self, tokens:Tokens, i:int, parent:Node):
-        super().__init__(tokens,i,parent)
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str] ):
+        super().__init__(tokens,i,parent,flags)
         self.n = 0
         self.buffer = {}
         self.name = None
@@ -998,7 +1006,7 @@ class NodeFunction( Node ):
                     return ParseError.fromToken('Expected an identifier or `)`', token)
             elif 'type_hint' not in self.buffer:
                 if token.t == ':':
-                    ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,(',',')'),True)
+                    ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,self.flags,(',',')'),True)
                     self.buffer['type_hint'] = ctx.node
                 elif token.t == '=':
                     self.buffer['type_hint'] = None
@@ -1007,7 +1015,7 @@ class NodeFunction( Node ):
                     return ParseError.fromToken('Expected one of `:=,)`', token)
             elif 'default' not in self.buffer:
                 if token.t == '=':
-                    ctx.node = NodeExpression(self.tokens,ctx.ptr,self,(')',','),allowEmpty=False,handleParent=True)
+                    ctx.node = NodeExpression(self.tokens,ctx.ptr,self,self.flags,(')',','),allowEmpty=False,handleParent=True)
                     self.buffer['default'] = ctx.node
                 else:
                     return ParseError.fromToken('Expected one of `=,)`', token)
@@ -1016,11 +1024,11 @@ class NodeFunction( Node ):
             self.n -= 1
         elif self.n == 3: # Type hint or body
             if token.t == '{':
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=True)
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,handleParent=True)
                 self.body = ctx.node
                 ctx.enclose.append(Enclosure(token,'}'))
             elif token.t == '->':
-                ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,('{',),True)
+                ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,self.flags,('{',),True)
                 self.type = ctx.node
                 self.n -= 1
             else:
@@ -1051,7 +1059,7 @@ class NodeIf( Node ):
         if self.inBlock:
             if self.condition == None:
                 if token.t == '(':
-                    ctx.node = NodeExpression(self.tokens,self.i,self,')',handleParent=True,allowEmpty=False,finishEnclose=')')
+                    ctx.node = NodeExpression(self.tokens,self.i,self,self.flags,')',handleParent=True,allowEmpty=False,finishEnclose=')')
                     self.condition = ctx.node
                     ctx.enclose.append(Enclosure(token,')'))
                 else:
@@ -1063,10 +1071,10 @@ class NodeIf( Node ):
                     return ParseError.fromToken('Expected `)`', token)
             elif self.expression == False:
                 if token.t == '{':
-                    ctx.node = NodeBlock(self.tokens,self.i,self,handleParent=False)
+                    ctx.node = NodeBlock(self.tokens,self.i,self,self.flags,handleParent=False)
                     ctx.enclose.append(Enclosure(token,'}'))
                 else:
-                    ctx.node = NodeExpression(self.tokens,self.i,self,';',handleParent=False,allowEmpty=True)
+                    ctx.node = NodeExpression(self.tokens,self.i,self,self.flags,';',handleParent=False,allowEmpty=True)
                     ctx.ptr -= 1
                 self.expression = ctx.node
             elif self.otherwise == None:
@@ -1077,13 +1085,13 @@ class NodeIf( Node ):
                     ctx.ptr -= 1
             elif self.otherwise == False:
                 if token.t == '{':
-                    ctx.node = NodeBlock(self.tokens,self.i,self,handleParent=False)
+                    ctx.node = NodeBlock(self.tokens,self.i,self,self.flags,handleParent=False)
                     ctx.enclose.append(Enclosure(token,'}'))
                 elif token.t == 'if':
                     ctx.node = NodeIf(self.tokens,ctx.ptr,self,inBlock=True)
                     self.otherwise = ctx.node
                 else:
-                    ctx.node = NodeExpression(self.tokens,self.i,self,';',handleParent=False,allowEmpty=True)
+                    ctx.node = NodeExpression(self.tokens,self.i,self,self.flags,';',handleParent=False,allowEmpty=True)
                     ctx.ptr -= 1
                 self.otherwise = ctx.node
             else:
@@ -1092,20 +1100,20 @@ class NodeIf( Node ):
         else:
             if self.condition == None:
                 if token.t == '(':
-                    ctx.node = NodeExpression(self.tokens,self.i,self,')',handleParent=True,allowEmpty=False,finishEnclose=')')
+                    ctx.node = NodeExpression(self.tokens,self.i,self,self.flags,')',handleParent=True,allowEmpty=False,finishEnclose=')')
                     self.condition = ctx.node
                     ctx.enclose.append(Enclosure(token,')'))
                 else:
                     return ParseError.fromToken('Expected `(`', token)
             elif self.expression == None:
                 if token.t == ')':
-                    ctx.node = NodeExpression(self.tokens,self.i,self,'else',handleParent=True,allowEmpty=False)
+                    ctx.node = NodeExpression(self.tokens,self.i,self,self.flags,'else',handleParent=True,allowEmpty=False)
                     self.expression = ctx.node
                 else:
                     return ParseError.fromToken('Expected `)`', token)
             elif self.otherwise == None:
                 if token.t == 'else':
-                    ctx.node = NodeExpression(self.tokens,self.i,self,self.closeTokens,handleParent=True,allowEmpty=False)
+                    ctx.node = NodeExpression(self.tokens,self.i,self,self.flags,self.closeTokens,handleParent=True,allowEmpty=False)
                     self.otherwise = ctx.node
                 else:
                     return ParseError.fromToken('Expected `else`', token)
@@ -1130,18 +1138,18 @@ class NodeWhile( Node ):
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
         if self.condition == None:
             if token.t == '(':
-                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,(')',),handleParent=False,allowEmpty=False,finishEnclose=')')
+                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,self.flags,(')',),handleParent=False,allowEmpty=False,finishEnclose=')')
                 self.condition = ctx.node
                 ctx.enclose.append(Enclosure(token,')'))
             else:
                 return ParseError.fromToken('Expected `(` before condition', token)
         elif self.body == None:
             if token.t == '{':
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=False)
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,handleParent=False)
                 self.body = ctx.node
                 ctx.enclose.append(Enclosure(token,'}'))
             else:
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,singleElement=True)
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,singleElement=True)
                 self.body = ctx.node
                 ctx.ptr -= 1
         else:
@@ -1157,8 +1165,8 @@ class NodeFor( Node ):
     increment : 'NodeBlock'
     body      : NodeExpression
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node ):
-        super().__init__(tokens,i,parent)
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str] ):
+        super().__init__(tokens,i,parent,flags)
         self.init = None
         self.condition = None
         self.increment = None
@@ -1167,18 +1175,18 @@ class NodeFor( Node ):
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
         if self.init == None:
             if token.t == '(':
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,singleElement=True)
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,singleElement=True)
                 self.init = ctx.node
                 ctx.enclose.append(Enclosure(self,')'))
             else:
                 return ParseError.fromToken('Expected `(`', token)
         elif self.condition == None:
             ctx.ptr -= 1
-            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,(';',),handleParent=False,allowEmpty=False)
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,self.flags,(';',),handleParent=False,allowEmpty=False)
             self.condition = ctx.node
         elif self.increment == None:
             ctx.ptr -= 1
-            ctx.node = NodeBlock(self.tokens,ctx.ptr,self,singleElement=True)
+            ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,singleElement=True)
             self.increment = ctx.node
         elif self.body == None:
             if token.t == ';':
@@ -1193,21 +1201,91 @@ class NodeFor( Node ):
                 return ParseError.fromToken('Expected `)`', token)
         elif self.body == True:
             if token.t == '{':
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=False)
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,handleParent=False)
                 self.body = ctx.node
                 ctx.enclose.append(Enclosure(token,'}'))
             else:
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,singleElement=True)
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,singleElement=True,handleParent=True)
                 self.body = ctx.node
                 ctx.ptr -= 1
         else:
             ctx.node = self.parent
+            
+class NodeConstructor( Node ):
+    """
+    A struct/class constructor
+    """
+    
+    struct      : NodeExpression
+    constructor : 'NodeBlock'
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], struct:NodeExpression ):
+        super().__init__(tokens,i,parent,flags)
+        self.struct = struct
+        self.constructor = None
+        
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if self.constructor == None:
+            if token.t == '{':
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags+('constructor',),handleParent=True,singleElement=False)
+                self.constructor = ctx.node
+                ctx.enclose.append(Enclosure(token,'}'))
+            else:
+                return ParseError.fromToken('Expected `{`', token)
+        else:
+            ctx.node = self.parent
+
+class NodeStruct( Node ):
+    """
+    A struct declaration
+    """
+    
+    name : str
+    body : 'NodeBlock'
+        
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str] ):
+        super().__init__(tokens,i,parent,flags)
+        self.name = None
+        self.body = None
+        
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if self.name == None:
+            if token.isidentifier():
+                self.name = token.t
+            else:
+                return ParseError.fromToken('Expected identifier', token)
+        elif self.body == None:
+            if token.t == '{':
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,handleParent=False)
+                self.body = ctx.node
+                ctx.enclose.append(Enclosure(token,'}'))
+            else:
+                return ParseError.fromToken('Expected `{`', token)
+        else:
+            ctx.node = self.parent
+            
+class NodeStructProp( Node ):
+    """
+    A struct property declaration
+    """
+    
+    name : str
+    type : NodeTypeHint
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], name:str, hint:NodeTypeHint ):
+        super().__init__(tokens,i,parent,flags)
+        self.name = name
+        self.type = hint
+        
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        ctx.node = self.parent
+        ctx.ptr -= 1
 
 class NodeBlock( Node ):
     children : list['Node']
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node, handleParent:bool=False, singleElement:bool=False ):
-        super().__init__(tokens,i,parent)
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], handleParent:bool=False, singleElement:bool=False ):
+        super().__init__(tokens,i,parent,flags)
         self.children = []
         self.handleParent = handleParent
         self.singleElement = singleElement
@@ -1219,7 +1297,7 @@ class NodeBlock( Node ):
         elif token.t == ';':
             pass
         elif token.t == '{':
-            ctx.node = NodeBlock(self.tokens,ctx.ptr,self)
+            ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags)
             self.children.append(ctx.node)
             ctx.enclose.append(Enclosure(token,'}'))
         elif token.t == '}':
@@ -1231,33 +1309,43 @@ class NodeBlock( Node ):
             else:
                 return ParseError.fromToken('Missmatched `}`', token)
         elif token.t == 'let':
-            ctx.node = NodeLet(self.tokens,ctx.ptr,self)
+            ctx.node = NodeLet(self.tokens,ctx.ptr,self,self.flags)
             self.children.append(ctx.node)
         elif token.t == 'if':
-            ctx.node = NodeIf(self.tokens,ctx.ptr,self,inBlock=True)
+            ctx.node = NodeIf(self.tokens,ctx.ptr,self,self.flags,inBlock=True)
             self.children.append(ctx.node)
         elif token.t == 'fn':
-            ctx.node = NodeFunction(self.tokens,ctx.ptr,self)
+            ctx.node = NodeFunction(self.tokens,ctx.ptr,self,self.flags)
             self.children.append(ctx.node)
         elif token.t == 'return':
-            ctx.node = NodeReturn(self.tokens,ctx.ptr,self)
+            ctx.node = NodeReturn(self.tokens,ctx.ptr,self,self.flags)
             self.children.append(ctx.node)
         elif token.t == 'while':
-            ctx.node = NodeWhile(self.tokens,ctx.ptr,self)
+            ctx.node = NodeWhile(self.tokens,ctx.ptr,self,self.flags)
             self.children.append(ctx.node)
         elif token.t == 'for':
-            ctx.node = NodeFor(self.tokens,ctx.ptr,self)
+            ctx.node = NodeFor(self.tokens,ctx.ptr,self,self.flags)
+            self.children.append(ctx.node)
+        elif token.t == 'struct':
+            ctx.node = NodeStruct(self.tokens,ctx.ptr,self,self.flags)
             self.children.append(ctx.node)
         elif type(token.t) == TokenEOF:
             if self.parent != None:
                 return ParseError.fromToken('Unexpected EOF', token)
+        elif token.isidentifier() and isinstance(self.parent,NodeStruct) and ctx.tokens.tokens[ctx.ptr+1].t == ':':
+            hint = NodeTypeHint(self.tokens,ctx.ptr+2,None,self.flags,';',handleParent=False,allowEmpty=True)
+            prop = NodeStructProp(self.tokens,ctx.ptr,self,self.flags,token.t,hint)
+            hint.parent = prop
+            self.children.append(prop)
+            ctx.node = hint
+            ctx.ptr += 1
         else:
-            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,(';',) if self.singleElement else (';','}'),handleParent=True,allowEmpty=True)
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,self.flags,(';',) if self.singleElement else (';','}'),handleParent=True,allowEmpty=True)
             self.children.append(ctx.node)
             ctx.ptr -= 1
         
 def parse( tokens:Tokens ) -> Union[Node,ParseError]:
-    root = NodeBlock(tokens,0,None)       # the root token of the AST
+    root = NodeBlock(tokens,0,None,())    # the root token of the AST
     ctx = ParseContext( tokens, root, 0 ) # the parsing context
     while ctx.ptr < len(ctx.tokens.tokens):
         # feeds the current node with the current token
