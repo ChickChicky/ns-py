@@ -397,8 +397,8 @@ class NodeString( Node ):
     
     value : str
     
-    def __init__(self,tokens:Tokens,i:int,parent:Node,value:str):
-        super().__init__(tokens,i,parent)
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], value:str ):
+        super().__init__(tokens,i,parent,flags)
         self.value = value
 
 class NodeAccessDot( Node ):
@@ -422,8 +422,21 @@ class NodeAccessColon( Node ):
     node : Node
     prop : str
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node, node:Node, prop:str ):
-        super().__init__(tokens,i,parent)
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], node:Node, prop:str ):
+        super().__init__(tokens,i,parent,flags)
+        self.node = node
+        self.prop = prop
+        
+class NodeAccessColonDouble( Node ):
+    """
+    `::` accessor
+    """
+    
+    node : Node
+    prop : str
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], node:Node, prop:str ):
+        super().__init__(tokens,i,parent,flags)
         self.node = node
         self.prop = prop
         
@@ -471,8 +484,8 @@ class NodeCall( Node ):
     value : Node                   # the called value
     args  : list['NodeExpression'] # the arguments to the call
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node, value:Node ):
-        super().__init__(tokens,i,parent)
+    def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], value:Node ):
+        super().__init__(tokens,i,parent,flags)
         self.value = value
         self.args = []
         self.arg = None
@@ -550,7 +563,7 @@ class NodeCast( Node ):
     value : 'NodeExpression'
     type  : 'NodeTypeHint'
     
-    def __init__(self,tokens:Tokens,i:int,parent:Node,value:'NodeExpression',cast:'NodeTypeHint'):
+    def __init__( self, tokens:Tokens, i:int, parent:Node, value:'NodeExpression', cast:'NodeTypeHint' ):
         super().__init__(tokens,i,parent)
         self.value = value
         self.type = cast
@@ -636,14 +649,19 @@ class NodeExpression ( Node ):
             self.expression = self.buffer[0] if len(self.buffer) else None
             ctx.node = self.parent
         # Dot and colon accessor operators
-        elif len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
+        elif len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':','::'):
             a = self.buffer.pop()
             if not token.isidentifier():
                 return ParseError.fromToken('Expected identifier after `%s`'%(a.t,), token)
             v = None if len(self.buffer) == 0 else self.buffer.pop()
-            self.buffer.append(NodeAccessDot(self.tokens,ctx.ptr,self,self.flags,v,token.t))
+            cls = {
+                '.' :  NodeAccessDot,
+                ':' :  NodeAccessColon,
+                '::' : NodeAccessColonDouble
+            }[a.t]
+            self.buffer.append(cls(self.tokens,ctx.ptr,self,self.flags,v,token.t))
         # Dot and colon accessor operators
-        elif token.t in ('.',':'):
+        elif token.t in ('.',':','::'):
             if len(self.buffer) > 0 and type(self.buffer[-1]) == Token :
                 return ParseError.fromToken('Unexpected token', token)
             else:
@@ -655,7 +673,7 @@ class NodeExpression ( Node ):
             # Call operator
             if len(self.buffer):
                 value = self.buffer.pop()
-                ctx.node = NodeCall(self.tokens,ctx.ptr,self,value)
+                ctx.node = NodeCall(self.tokens,ctx.ptr,self,self.flags,value)
                 self.buffer.append(ctx.node)
                 ctx.enclose.append(Enclosure(token,')'))
             # New expression
@@ -703,7 +721,7 @@ class NodeExpression ( Node ):
         elif token.isnumeric():
             self.buffer.append(NodeNumber(self.tokens,ctx.ptr,self,token.t))
         elif token.isstring():
-            self.buffer.append(NodeString(self.tokens,ctx.ptr,self.tokens,token.t[1:-1]))
+            self.buffer.append(NodeString(self.tokens,ctx.ptr,self.tokens,self.flags,token.t[1:-1]))
         elif token.t in operatorTokens:
             self.buffer.append(token)
         elif type(token.t) == TokenEOF:
