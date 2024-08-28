@@ -121,6 +121,7 @@ operators: list[dict[str,Union[Literal['prefix'],Literal['binary'],Literal['post
     {
         '++' : 'postfix',
         '--' : 'postfix',
+        '*'  : 'postfix',
     },
     {
         '++' : 'prefix',
