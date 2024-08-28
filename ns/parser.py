@@ -508,7 +508,7 @@ class NodeCall( Node ):
             self.arg = None
         # Creates a new argument
         else:
-            ctx.node = NodeExpression(self.tokens,self.i,self,self.flags,(',',')'),handleParent=True,allowEmpty=True)
+            ctx.node = NodeExpression(self.tokens,self.i,self,(',',')'),handleParent=True,allowEmpty=True)
             self.arg = ctx.node
             # Makes sure that the expression also catches the first token
             ctx.ptr -= 1
@@ -688,7 +688,9 @@ class NodeExpression ( Node ):
                 self.buffer.append(ctx.node)
                 ctx.enclose.append(Enclosure(token,']'))
             else:
-                return ParseError.fromToken('Arrays are not supported yet', token)
+                ctx.node = NodeArray(self.tokens,ctx.ptr,self)
+                self.buffer.append(ctx.node)
+                ctx.enclose.append(Enclosure(token,']'))
         elif token.t == '{':
             if len(self.buffer) and isinstance(self.buffer[-1],NodeName):
                 struct = self.buffer.pop()
@@ -1289,6 +1291,37 @@ class NodeStructProp( Node ):
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
         ctx.node = self.parent
         ctx.ptr -= 1
+        
+class NodeArray( Node ):
+    """
+    An array
+    """
+    
+    items : list[NodeExpression]
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node ):
+        super().__init__(tokens,i,parent)
+        self.items = []
+        self.item = None
+        
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if type(token.t) == TokenEOF:
+            return ParseError.fromToken('Unexpected EOF', token)
+        if token.t == ']':
+            if self.item:
+                self.items.append(self.item)
+            if len(ctx.enclose) and ctx.enclose[-1].end == token.t:
+                ctx.enclose.pop()
+            else:
+                return ParseError.fromToken('Missmatched `]`', token)
+            ctx.node = self.parent
+        elif token.t == ',':
+            self.items.append(self.item or NodeExpression(self.tokens,self.i,self,(',',']'),handleParent=True,allowEmpty=True))
+            self.item = None
+        else:
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,(',',']'),handleParent=True,allowEmpty=True)
+            self.item = ctx.node
+            ctx.ptr -= 1
 
 class NodeBlock( Node ):
     children : list['Node']
