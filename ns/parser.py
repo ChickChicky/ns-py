@@ -1178,55 +1178,47 @@ class NodeFor( Node ):
     A for loop
     """
     
-    init      : 'NodeBlock'
-    condition : NodeExpression
-    increment : 'NodeBlock'
-    body      : NodeExpression
+    name_it  : Token
+    name_i   : Union[Token,None]
+    iterable : NodeExpression
+    body     : 'NodeBlock'
     
     def __init__( self, tokens:Tokens, i:int, parent:Node, flags:tuple[str] ):
         super().__init__(tokens,i,parent,flags)
-        self.init = None
-        self.condition = None
-        self.increment = None
+        self.name_it = None
+        self.name_i = None
+        self.iterable = None
         self.body = None
+        self.n = 0
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
-        if self.init == None:
-            if token.t == '(':
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,singleElement=True)
-                self.init = ctx.node
-                ctx.enclose.append(Enclosure(self,')'))
+        if self.n == 0:
+            if not token.isidentifier():
+                return ParseError.fromToken('Expected iterator name', token)
+            self.name_it = token
+            self.n = 1
+        elif self.n == 1:
+            if token.t == ',' and self.name_i == None:
+                self.name_i = self.name_it
+                self.n = 0
+            elif token.t == 'in':
+                ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,self.flags,'{',True,False)
+                self.iterable = ctx.node
+                self.n = 2
+            elif token.t == ':':
+                return ParseError.fromToken('Type hint on for loop iterator is not currently supported', token)
             else:
-                return ParseError.fromToken('Expected `(`', token)
-        elif self.condition == None:
-            ctx.ptr -= 1
-            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,self.flags,(';',),handleParent=False,allowEmpty=False)
-            self.condition = ctx.node
-        elif self.increment == None:
-            ctx.ptr -= 1
-            ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,singleElement=True)
-            self.increment = ctx.node
-        elif self.body == None:
-            if token.t == ';':
-                self.body = False
-            else:
-                return ParseError.fromToken('Expected `;`', token)
-        elif self.body == False:
-            if token.t == ')':
-                ctx.enclose.pop()
-                self.body = True
-            else:
-                return ParseError.fromToken('Expected `)`', token)
-        elif self.body == True:
-            if token.t == '{':
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,handleParent=False)
-                self.body = ctx.node
-                ctx.enclose.append(Enclosure(token,'}'))
-            else:
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,singleElement=True,handleParent=True)
-                self.body = ctx.node
-                ctx.ptr -= 1
-        else:
+                return ParseError.fromToken('Expected `in`', token)
+        elif self.n == 2:
+            if token.t != '{':
+                return ParseError.fromToken('Something went horribly wrong', token)
+            ctx.node = NodeBlock(self.tokens,ctx.ptr,self,self.flags,True)
+            self.body = ctx.node
+            ctx.enclose.append(Enclosure(token,'}'))
+            self.n = 3
+        elif self.n == 3:
+            if token.t != '}':
+                return ParseError.fromToken('Something went horribly wrong', token)
             ctx.node = self.parent
             
 class NodeConstructor( Node ):
