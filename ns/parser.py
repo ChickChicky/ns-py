@@ -500,7 +500,7 @@ class NodeCall( Node ):
             if len(ctx.enclose) and ctx.enclose[-1].end == token.t:
                 ctx.enclose.pop()
             else:
-                return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
+                return ParseError.fromToken('Missmatched `)`', token)
             ctx.node = self.parent
         # Adds the previous argument to the argument list, allowing empty arguments
         elif token.t == ',':
@@ -521,7 +521,7 @@ class NodeOperatorPrefix( Node ):
     op    : Token
     value : 'NodeExpression'
     
-    def __init__(self,tokens:Tokens,i:int,parent:Node,op:Token,value:'NodeExpression'):
+    def __init__( self, tokens:Tokens, i:int, parent:Node, op:Token, value:'NodeExpression' ):
         super().__init__(tokens,i,parent)
         self.op = op
         self.value = value
