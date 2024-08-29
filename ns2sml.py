@@ -398,6 +398,22 @@ class NSTypes:
 
     @NSValue.make_class
     class String:
+        @NSValue.make_trait(NSTraits.Op.Lt)
+        class __trait__Lt:
+            def lt(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+                other, = args.args
+                if other.type != NSTypes.String:
+                    return None
+                return TRUE if args.bound.data<other.data else FALSE
+            
+        @NSValue.make_trait(NSTraits.Op.Gt)
+        class __trait__Gt:
+            def gt(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+                other, = args.args
+                if other.type != NSTypes.String:
+                    return None
+                return TRUE if args.bound.data>other.data else FALSE
+            
         @NSValue.make_trait(NSTraits.Op.Eq)
         class __trait__Eq:
             def eq(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
