@@ -199,7 +199,10 @@ class NSFunctionCode(NSFunction):
                 raise NSEException.fromNode('Missing value for argument %s'%(name,),ctx.top().node)
         frame = self.frame(mapping)
         frame.vars.new('self',args.bound or NULL)
-        ctx.eval(self.func.body,frame)
+        if self.func.body == None:
+            ctx.push_value(NULL)
+        else:
+            ctx.eval(self.func.body,frame)
     
 class Prop:
     

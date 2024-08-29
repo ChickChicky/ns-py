@@ -1040,8 +1040,6 @@ class NodeFunction( Node ):
         self.pararameters = []
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
-        if type(token.t) == TokenEOF:
-            return ParseError.fromToken('Unexpected EOF', token)
         if self.n == 0: # Function name + modifiers
             if token.isidentifier():
                 if token.t in ('static','inline'):
@@ -1096,12 +1094,14 @@ class NodeFunction( Node ):
                 ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=True)
                 self.body = ctx.node
                 ctx.enclose.append(Enclosure(token,'}'))
-            elif token.t == '->':
-                ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,('{',),True)
+            elif token.t == '->' and self.type == None:
+                ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,('{',';'),True)
                 self.type = ctx.node
                 self.n -= 1
+            elif token.t == ';':
+                ctx.node = self.parent
             else:
-                return ParseError.fromToken('Expected `{` or `->`', token)
+                return ParseError.fromToken('Expected one of `{`, `;`'+(', `->`' if self.type == None else ''), token)
         elif self.n == 4:
             ctx.node = self.parent
         self.n += 1
