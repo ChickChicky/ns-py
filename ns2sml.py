@@ -1074,7 +1074,7 @@ class NSEContext:
         self.callstack[-1].stack.append(value)
         return self
     
-def toNSString(ctx: NSEContext, v:NSValue, h:bool=True) -> str:
+def toNSString(ctx: NSEContext, v:NSValue, h:bool=True, rep:bool=False) -> str:
     if v.type == NSKind.Null:
         return 'null'
     elif v.type == NSKind.Class:
@@ -1083,11 +1083,13 @@ def toNSString(ctx: NSEContext, v:NSValue, h:bool=True) -> str:
     elif v.type == NSKind.Trait:
         return '<trait>'
     elif v.type == NSTypes.String:
-        return v.data
+        return repr(v.data) if rep else v.data
     elif v.type == NSTypes.Number:
         return str(int(v.data)) if int(v.data) == v.data else str(v.data)
     elif v.type == NSTypes.Boolean:
         return ('false','true')[v.data['__boolean']]
+    elif v.type == NSTypes.Array:
+        return '['+', '.join(toNSString(ctx,v,rep=True) for v in v.data['items'])+']'
     elif h:
         toString = v.get_trait_method(NSTraits.ToString,'toString')
         if toString:
