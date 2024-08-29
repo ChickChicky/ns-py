@@ -355,7 +355,6 @@ class Node:
     tokens   : Tokens
     i        : int
     parent   : 'Node'
-    flags    : tuple[str]
     
     def __init__( self, tokens:Tokens, i:int, parent:'Node' ):
         self.tokens = tokens
@@ -1066,7 +1065,7 @@ class NodeIf( Node ):
     expression : Union[NodeExpression,'NodeBlock']
     otherwise  : Union[NodeExpression,'NodeBlock',None]
     
-    def __init__ (self, tokens:Tokens, i:int, parent:Node, flags:tuple[str], closeTokens:list[str]=None, handleParent:bool=False, inBlock:bool=True ):
+    def __init__ (self, tokens:Tokens, i:int, parent:Node, closeTokens:list[str]=None, handleParent:bool=False, inBlock:bool=True ):
         super().__init__(tokens,i,parent)
         self.closeTokens = closeTokens
         self.handleParent = handleParent
