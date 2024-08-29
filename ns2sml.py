@@ -714,7 +714,11 @@ class NSEExecutors:
             state = ctx.top()
             value = state.pop_any()
             if not value:
-                ctx.eval(self.node.node,state.frame)
+                if self.node.node == None:
+                    found, v = state.frame.vars.get('self')
+                    ctx.push_value(v if found else NULL)
+                else:
+                    ctx.eval(self.node.node,state.frame)
             else:
                 ctx.pop()
                 ctx.push_value(value.get(self.node.prop) or NULL)
@@ -732,7 +736,11 @@ class NSEExecutors:
             state = ctx.top()
             value = state.pop_any()
             if not value:
-                ctx.eval(self.node.node,state.frame)
+                if self.node.node == None:
+                    found, v = state.frame.vars.get('self')
+                    ctx.push_value(v if found else NULL)
+                else:
+                    ctx.eval(self.node.node,state.frame)
             else:
                 ctx.pop()
                 val = value.get(self.node.prop,False,True) or NULL
@@ -753,7 +761,11 @@ class NSEExecutors:
             state = ctx.top()
             value = state.pop_any()
             if not value:
-                ctx.eval(self.node.node,state.frame)
+                if self.node.node == None:
+                    found, v = state.frame.vars.get('self')
+                    ctx.push_value(v if found else NULL)
+                else:
+                    ctx.eval(self.node.node,state.frame)
             else:
                 ctx.pop()
                 ctx.push_value(value.get(self.node.prop,False,True) or NULL)

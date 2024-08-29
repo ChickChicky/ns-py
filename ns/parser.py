@@ -664,10 +664,7 @@ class NodeExpression ( Node ):
             if len(self.buffer) > 0 and type(self.buffer[-1]) == Token :
                 return ParseError.fromToken('Unexpected token', token)
             else:
-                if len(self.buffer) > 0 or token.t == '.':
-                    self.buffer.append(token)
-                else:
-                    return ParseError.fromToken('Missing expression before `%s`'%(token.t,), token)
+                self.buffer.append(token)
         elif token.t == '(':
             # Call operator
             if len(self.buffer):
