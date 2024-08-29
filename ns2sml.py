@@ -398,7 +398,13 @@ class NSTypes:
 
     @NSValue.make_class
     class String:
-        pass
+        @NSValue.make_trait(NSTraits.Op.Eq)
+        class __trait__Eq:
+            def eq(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+                other, = args.args
+                if other.type != NSTypes.String:
+                    return FALSE
+                return TRUE if args.bound.data==other.data else FALSE
 
     @NSValue.make_class
     class Number:
@@ -425,6 +431,14 @@ class NSTypes:
                 if other.type != NSTypes.Number:
                     return None
                 return NSValue.Number(args.bound.data+other.data)
+            
+        @NSValue.make_trait(NSTraits.Op.Eq)
+        class __trait__Eq:
+            def eq(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+                other, = args.args
+                if other.type != NSTypes.Number:
+                    return FALSE
+                return TRUE if args.bound.data==other.data else FALSE
             
     @NSValue.make_class
     class Array:
@@ -811,26 +825,19 @@ class NSEExecutors:
                         '>' : ( NSTraits.Op.Gt, 'gt' ),
                         '<' : ( NSTraits.Op.Lt, 'lt' ),
                         '+' : ( NSTraits.Op.Add, 'add' ),
-                        '-' : ( NSTraits.Op.Sub, 'sub' )
+                        '-' : ( NSTraits.Op.Sub, 'sub' ),
+                        '==' : ( NSTraits.Op.Eq, 'eq' )
                     }.get(op,None)
                     
-                    if not op_data:
-                        if op == '==':
-                            ctx.pop()
-                            ctx.push_value(TRUE if left == right else FALSE)
-                            return
-                        else:
-                            raise NSEException.fromToken('Unimplemented operation \'%s\''%(op,),self.node.op)
-                    
                     result = NULL
-                    if left.type in (NSKind.Class,NSKind.Null,NSKind.Trait):
-                        result = FALSE
-                    elif left.type:
+                    if left.type:
                         method = left.get_trait_method(op_data[0],op_data[1])
                         if method:
                             method.call(ctx,NSFunction.Arguments([right],{},method,left))
                             result = ctx.pop_value_any()
                             # TODO: Add support for NS functions
+                        elif op == '==':
+                            result = TRUE if left == right else FALSE
                         else:
                             raise NSEException.fromToken('Unsupported operation \'%s\' between `%s` and `%s`'%(op,toNSString(ctx,right.type),toNSString(ctx,left.type)),self.node.op)
                     
