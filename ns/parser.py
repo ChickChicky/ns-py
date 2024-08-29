@@ -116,6 +116,8 @@ compoundTokens = [
     '=>',
     '::',
     '//',
+    '/*',
+    '*/',
 ]
 
 operators: list[dict[str,Union[Literal['prefix'],Literal['binary'],Literal['postfix']]]] = [
@@ -202,6 +204,7 @@ def tokenize(source: Source) -> Tokens:
     tokens = Tokens(source)
     
     in_line_comment = False
+    in_block_comment = False
     
     l,c = 0,0
     
@@ -211,7 +214,7 @@ def tokenize(source: Source) -> Tokens:
     
     def sep(i,dooff=True):
         nonlocal tmp
-        if in_line_comment:
+        if in_line_comment or in_block_comment:
             return
         if len(tmp):
             tokens.tokens.append(Token(tmp,c-(dooff*len(tmp)),l,i,source))
@@ -269,14 +272,25 @@ def tokenize(source: Source) -> Tokens:
             compound = False
             for t in compoundTokens:
                 if source.body[i:i+len(t)] == t:
-                    if t == '//':
+                    if t == '*/':
+                        in_block_comment = False
+                        tmp = ''
+                        compound = True
+                        skip = 1
+                    elif in_block_comment or in_line_comment:
+                        pass
+                    elif t == '/*':
+                        in_block_comment = True
+                    elif t == '//':
                         in_line_comment = True
-                    sep(i)
-                    tmp = t
-                    sep(i,False)
-                    skip = len(t)-1
-                    compound = True
-            if not compound:
+                    else:
+                        sep(i)
+                        tmp = t
+                        sep(i,False)
+                        skip = len(t)-1
+                        compound = True
+                    break
+            if not compound and not (in_block_comment or in_line_comment):
                 if ch in ' \t\n':
                     sep(i)
                 elif ch in '.,:;\/+-*=!?()[]\{\}<>@#~^&\\|':
