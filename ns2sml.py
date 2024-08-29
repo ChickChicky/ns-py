@@ -112,28 +112,7 @@ class NSEException(BaseException):
     @staticmethod
     def fromToken( msg:str, token:ns.Token ) -> 'NSEException':
         return NSEException(msg, token.l, token.c, len(token.t), token.s)
-    
-class NSFloat:
-    
-    value : float
-    
-    def __init__(self,value:float=0.0):
-        self.value = value
 
-class NSInt:
-    
-    value : int
-    
-    def __init__(self,value:int=0):
-        self.value = value
-        
-class NSString:
-    
-    value : str
-    
-    def __init__(self,value:str=''):
-        self.value = value
-        
 class NSFunction:
     
     class Arguments:
