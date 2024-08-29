@@ -4,9 +4,7 @@
 
 Everything is in constant movement and subject to change, but since I'm mainly working on the interpreter now, the syntax should not change all so much.
 
-# Syntactic features
-
-## Syntax
+# Examples
 
 ```js
 // Basic hello world
