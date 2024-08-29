@@ -115,6 +115,7 @@ compoundTokens = [
     '->',
     '=>',
     '::',
+    '//',
 ]
 
 operators: list[dict[str,Union[Literal['prefix'],Literal['binary'],Literal['postfix']]]] = [
@@ -200,6 +201,8 @@ def tokenize(source: Source) -> Tokens:
     
     tokens = Tokens(source)
     
+    in_line_comment = False
+    
     l,c = 0,0
     
     flags: dict[str,dict[str,Any]] = {}
@@ -208,6 +211,8 @@ def tokenize(source: Source) -> Tokens:
     
     def sep(i,dooff=True):
         nonlocal tmp
+        if in_line_comment:
+            return
         if len(tmp):
             tokens.tokens.append(Token(tmp,c-(dooff*len(tmp)),l,i,source))
             tmp = ''
@@ -264,6 +269,8 @@ def tokenize(source: Source) -> Tokens:
             compound = False
             for t in compoundTokens:
                 if source.body[i:i+len(t)] == t:
+                    if t == '//':
+                        in_line_comment = True
                     sep(i)
                     tmp = t
                     sep(i,False)
@@ -282,6 +289,9 @@ def tokenize(source: Source) -> Tokens:
                     tmp += ch
         c += 1
         if ch == '\n':
+            if in_line_comment:
+                in_line_comment = False
+                tmp = ''
             l += 1
             c = 0
     
