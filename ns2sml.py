@@ -777,7 +777,7 @@ class NSEExecutors:
                 ctx.push_value(value.get(self.node.prop,False,True) or NULL)
                 
     @_executor(ns.NodeOperatorBinary)
-    class OperatorBinary:
+    class OperatorBinary(NSEExecutor):
         
         node : ns.NodeOperatorBinary
         
@@ -844,7 +844,7 @@ class NSEExecutors:
                     ctx.push_value(result)
                     
     @_executor(ns.NodeIf)
-    class If:
+    class If(NSEExecutor):
         
         node : ns.NodeIf
         value : NSValue
@@ -880,7 +880,7 @@ class NSEExecutors:
                         ctx.eval(node,state.frame)
                     
     @_executor(ns.NodeString)
-    class String:
+    class String(NSEExecutor):
         
         node : ns.NodeString
         
@@ -892,7 +892,7 @@ class NSEExecutors:
             ctx.push_value(NSValue.String(self.node.value))
             
     @_executor(ns.NodeNumber)
-    class Number:
+    class Number(NSEExecutor):
         
         node : ns.NodeNumber
         
@@ -904,7 +904,7 @@ class NSEExecutors:
             ctx.push_value(NSValue.Number(self.node.value))
             
     @_executor(ns.NodeFunction)
-    class Function:
+    class Function(NSEExecutor):
         
         node : ns.NodeFunction
         
@@ -921,7 +921,7 @@ class NSEExecutors:
                 frame.vars.new(self.node.name,value)
                 
     @_executor(ns.NodeReturn)
-    class Return:
+    class Return(NSEExecutor):
         
         node : ns.NodeReturn
         
@@ -946,7 +946,7 @@ class NSEExecutors:
                 ctx.push_value(retval)
                 
     @_executor(ns.NodeArray)
-    class Array:
+    class Array(NSEExecutor):
         
         node : ns.NodeArray
         
@@ -968,7 +968,7 @@ class NSEExecutors:
                 ctx.eval(self.node.items[len(self.items)],state.frame)
                 
     @_executor(ns.NodeFor)
-    class For:
+    class For(NSEExecutor):
         
         node : ns.NodeFor
         
