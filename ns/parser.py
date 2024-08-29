@@ -743,7 +743,7 @@ class NodeRefExpression( Node ):
     """
     
     value      : Node
-    expression : NodeExpression
+    expression : Union[NodeExpression,'NodeBlock']
     name       : Union[Token, None]
     ref        : bool
     
@@ -756,19 +756,23 @@ class NodeRefExpression( Node ):
         
     def feed(self, token:Token, ctx:ParseContext) -> Union[ParseError,None]:
         if self.expression != None:
-            if token.t != ')':
+            if token.t not in (')','}'):
                 return ParseError.fromToken('Something went horribly wrong', token)
             ctx.node = self.parent
         elif token.t == '(':
             ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')',True,False,')')
             self.expression = ctx.node
             ctx.enclose.append(Enclosure(token,')'))
+        elif token.t == '{':
+            ctx.node = NodeBlock(self.tokens,ctx.ptr,self,True)
+            self.expression = ctx.node
+            ctx.enclose.append(Enclosure(token,'}'))
         elif token.isidentifier() and self.name == None:
             self.name = token
         elif token.t == '&' and self.name == None and not self.ref:
             self.ref = True
         else:
-            return ParseError.fromToken('Expected '+(('an identifier / ' + ('`&` / ' if not self.ref else '')) if self.name == None else '')+'`(`', token)
+            return ParseError.fromToken('Expected '+(('an identifier / ' + ('`&` / ' if not self.ref else '')) if self.name == None else '')+'`(` / `{`', token)
         
 class NodeTypeGeneric( Node ):
     """
