@@ -1019,7 +1019,7 @@ class NSEExecutors:
                     ctx.push_value(self.value if self.node.ref else v)
                 else:
                     name = self.node.name.t if self.node.name != None else 'it'
-                    ctx.eval(self.node.expression,state.frame({name:self.value}))
+                    ctx.eval(self.node.expression,state.frame({name:self.value,'self':self.value}))
                     
 NSEExecutors.executors = _executors
 del _executors
