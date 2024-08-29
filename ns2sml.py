@@ -1010,6 +1010,35 @@ class NSEExecutors:
                     ctx.eval(self.node.body,state.frame(v))
                     self.i += 1
                     
+    @_executor(ns.NodeRefExpression)
+    class RefExpression(NSEExecutor):
+        
+        node : ns.NodeRefExpression
+        
+        value : NSValue
+        
+        def __init__( self, node: ns.NodeRefExpression ):
+            self.node = node
+            self.value = None
+            
+        def next(self, ctx: 'NSEContext'):
+            state = ctx.top()
+            if not self.value:
+                v = state.pop_any()
+                if v != None:
+                    self.value = v
+                else:
+                    ctx.eval(self.node.value,state.frame)
+            else:
+                v = state.pop_any()
+                if v != None:
+                    ctx.pop()
+                    # ctx.push_value(v if self.node.ref else self.value)
+                    ctx.push_value(self.value if self.node.ref else v)
+                else:
+                    name = self.node.name.t if self.node.name != None else 'it'
+                    ctx.eval(self.node.expression,state.frame({name:self.value}))
+                    
 NSEExecutors.executors = _executors
 del _executors
         

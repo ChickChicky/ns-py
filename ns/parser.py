@@ -717,6 +717,13 @@ class NodeExpression ( Node ):
                 self.buffer.append(NodeCast(self.tokens,ctx.ptr,self,value,ctx.node))
             else:
                 return ParseError.fromToken('Expected expression before type cast', token)
+        elif token.t == '=>':
+            if len(self.buffer) and type(self.buffer[-1]) != Token:
+                value = self.buffer.pop()
+                ctx.node = NodeRefExpression(self.tokens,ctx.ptr,self,value)
+                self.buffer.append(ctx.node)
+            else:
+                return ParseError.fromToken('Expected expression before reference expression', token)
         elif token.isidentifier():
             self.buffer.append(NodeName(self.tokens,ctx.ptr,self,token.t))
         elif token.isnumeric():
@@ -729,6 +736,39 @@ class NodeExpression ( Node ):
             return ParseError.fromToken('Unexpected EOF', token)
         else:
             return ParseError.fromToken('Unexpected token', token)
+        
+class NodeRefExpression( Node ):
+    """
+    `... => (...)` reference operator
+    """
+    
+    value      : Node
+    expression : NodeExpression
+    name       : Union[Token, None]
+    ref        : bool
+    
+    def __init__(self, tokens:Tokens, i:int, parent:Node, value:Node):
+        super().__init__(tokens,i,parent)
+        self.value = value
+        self.expression = None
+        self.name = None
+        self.ref = False
+        
+    def feed(self, token:Token, ctx:ParseContext) -> Union[ParseError,None]:
+        if self.expression != None:
+            if token.t != ')':
+                return ParseError.fromToken('Something went horribly wrong', token)
+            ctx.node = self.parent
+        elif token.t == '(':
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')',True,False,')')
+            self.expression = ctx.node
+            ctx.enclose.append(Enclosure(token,')'))
+        elif token.isidentifier() and self.name == None:
+            self.name = token
+        elif token.t == '&' and self.name == None and not self.ref:
+            self.ref = True
+        else:
+            return ParseError.fromToken('Expected '+(('an identifier / ' + ('`&` / ' if not self.ref else '')) if self.name == None else '')+'`(`', token)
         
 class NodeTypeGeneric( Node ):
     """
