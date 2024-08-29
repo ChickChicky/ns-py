@@ -951,7 +951,17 @@ class NodeLet( Node ):
         # Name or modifier
         if self.n == 0:
             if token.isidentifier():
-                if token.t in ('const',):
+                if token.t in ('const','mut'):
+                    if token.t in self.modifiers:
+                        return ParseError.fromToken('Duplicate modifier', token)
+                    mods = self.modifiers | { token.t }
+                    incompatible = [
+                        ('const','mut')
+                    ]
+                    for inc in incompatible:
+                        if inc[0] in mods and inc[1] in mods:
+                            other = inc[token.t == inc[0]]
+                            return ParseError.fromToken('Modifier incompatible with `%s`'%(other,), token)
                     self.modifiers.add(token.t)
                     self.n -= 1
                 else:
