@@ -39,7 +39,7 @@ print({
 ```js
 // Which also means that `return` is optionnal when at the end of a function body
 fn hello() {
-    // same as `return "Hello, world";`
+    // same as `return "Hello, world!";`
     "Hello, world!";
 }
 
