@@ -57,20 +57,19 @@ print(
 > 12
 
 ```js
-// 
 print(
     x
-        => &y (y +1) // It currently has no practical use case, but adding an `&`
-        => &(it *2)  // in front allows to run the expression while returning the base value
-);                   // It could be useful for initialization, or fluent patterns where they're not supported
+        => &y (y +1) // Adding an `&` allows to run the expression while returning the base value
+        => &(it *2)  // It could be useful for initialization, or fluent patterns where they're not supported
+);                   
 ```
-> 12
+> 1
 
 ```js
 let a = and();
 
 // Creates a logic gate and connects it to the previous one
 let b = and() => &{
-    :connect(x);
+    :connect(a);
 };
 ```
