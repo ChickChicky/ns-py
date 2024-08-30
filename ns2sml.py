@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from typing import Union, Any, Callable, Type, Optional, TypeVar, Generic, Iterable
 
 import ns, sys
@@ -77,6 +78,26 @@ if consume_ns_arg('-ast'):
     print(explore(tree))
     exit(0)
     
+class RewindReturn(BaseException):
+    """
+    Raised to return from a function
+    """
+    
+    value: 'NSValue'
+    
+    def __init__(self, value: 'NSValue'):
+        self.value = value
+
+class FunctionException(BaseException):
+    """
+    Raised from a Python NSFunction to signal an error
+    """
+    
+    message: Union[str,None]
+    
+    def __init__(self, message: str = None):
+        self.message = message
+    
 class NSEException(BaseException):
     """
     Holds data about a runtime error
@@ -131,7 +152,7 @@ class NSFunction:
     def __init__( self ):
         pass
     
-    def call( self, ctx: 'NSEContext', args: Arguments ):
+    def call( self, ctx: 'NSEContext', frame: 'NSEFrame', args: Arguments ) -> 'NSValue':
         raise RuntimeError('That should not have happened')
     
 class NSFunctionNative(NSFunction):
@@ -142,8 +163,8 @@ class NSFunctionNative(NSFunction):
         super().__init__()
         self.callback = callback
         
-    def call( self, ctx: 'NSEContext', args: NSFunction.Arguments ):
-        ctx.push_value(NSValue.sanitize(self.callback(ctx,args)))
+    def call( self, ctx: 'NSEContext', frame: 'NSEFrame', args: NSFunction.Arguments ) -> 'NSValue':
+        return NSValue.sanitize(self.callback(ctx,frame,args))
         
 class NSFunctionCode(NSFunction):
     
@@ -155,15 +176,13 @@ class NSFunctionCode(NSFunction):
         self.func = func
         self.frame = frame
         
-    def call( self, ctx: 'NSEContext', args: NSFunction.Arguments ):
+    def call( self, ctx: 'NSEContext', frame: 'NSEFrame', args: NSFunction.Arguments ) -> 'NSValue':
         mapping = dict((param.name,None) for param in self.func.pararameters)
-        # TODO: Handle default parameter values
-        #       (+ change the scheme, as it requires execution of code :/)
         for name, arg in args.kwargs.items():
             if name in mapping:
                 mapping[name] = arg
             else:
-                raise NSEException.fromNode('Argument %s does not exist in this function'%(name,),ctx.top().node)
+                raise FunctionException('Argument %s does not exist in this function'%(name,))
         for arg in args.args:
             found = False
             for name, val in mapping.items():
@@ -172,16 +191,19 @@ class NSFunctionCode(NSFunction):
                     found = True
                     break
             if not found:
-                raise NSEException.fromNode('Unexpected extra argument',ctx.top().node)
+                raise FunctionException('Unexpected extra argument')
         for name, val in mapping.items():
             if val == None:
-                raise NSEException.fromNode('Missing value for argument %s'%(name,),ctx.top().node)
+                mapping[name] = NULL
         frame = self.frame(mapping)
         frame.vars.new('self',args.bound or NULL)
         if self.func.body == None:
-            ctx.push_value(NULL)
+            return NULL
         else:
-            ctx.eval(self.func.body,frame)
+            try:
+                return ctx.exec(self.func.body,frame)
+            except RewindReturn as ret:
+                return ret.value
     
 class Prop:
     
@@ -300,15 +322,20 @@ class NSValue:
         },NSKind.Class,props)
         
     @staticmethod
-    def create_trait() -> 'NSValue':
+    def create_trait( methods ) -> 'NSValue':
         return NSValue({
-            
+            'methods': methods
         },NSKind.Trait)
         
     @staticmethod
     def make_trait( target ):
+        if not isinstance(target,NSValue) or target.type != NSKind.Trait:
+            raise TypeError('make_trait must be called with a trait')
         class wrapper:
             def __init__( self, trait ):
+                for m in target.data['methods']:
+                    if not hasattr(trait,m) or not callable(getattr(trait,m)):
+                        raise TypeError('Implementation is missing method %s'%(repr(m),))
                 self.trait = trait
             def __set_name__( self, owner, name ):
                 if not hasattr(owner,'__trait'):
@@ -360,7 +387,7 @@ class NSValue:
     
     @staticmethod
     def Boolean( value: Any ) -> 'NSValue':
-        return NSValue._latevalue({'__boolean':bool(value)},'NSTypes.Boolean',None)
+        return NSValue._latevalue({'__boolean':bool(value)},'NSTypes.Boolean')
     
     @staticmethod
     def Array( items: list['NSValue'] ) -> 'NSValue':
@@ -368,108 +395,163 @@ class NSValue:
 
 class NSTraits:
     
-    ToString = NSValue.create_trait()
+    ToString = NSValue.create_trait(('toString',))
     
-    Iterator = NSValue.create_trait()
+    Iterator = NSValue.create_trait(('items',))
 
     class Op:
         
-        Add = NSValue.create_trait()
-        Sub = NSValue.create_trait()
-        Mul = NSValue.create_trait()
-        Div = NSValue.create_trait()
+        Add = NSValue.create_trait(('add',))
+        Sub = NSValue.create_trait(('sub',))
+        Mul = NSValue.create_trait(('mul',))
+        Div = NSValue.create_trait(('div',))
         
-        Eq = NSValue.create_trait()
-        Gt = NSValue.create_trait()
-        Lt = NSValue.create_trait()
+        Eq = NSValue.create_trait(('eq',))
+        Gt = NSValue.create_trait(('gt',))
+        Lt = NSValue.create_trait(('lt',))
+    
+ellipsis = type[Ellipsis]
+        
+def _check_bound_to(args: 'NSFunction.Arguments', target: NSValue):
+    if not args.bound:
+        raise FunctionException('Unbound method call')
+    elif args.bound.type != target:
+        raise FunctionException('Call to method bound to wrong type')
+    
+def _check_called_with(args: 'NSFunction.Arguments', target: Union[tuple[Union[NSValue,ellipsis]],list[tuple[Union[NSValue,ellipsis]]]]):
+    target = [target] if isinstance(target, tuple) else target
+    for alt in target:
+        for i, t in enumerate(alt):
+            if i+1 < len(alt) and isinstance(alt[i+1], ellipsis):
+                for j in range(i,len(args.args)):
+                    if args.args[j].type != t:
+                        raise FunctionException('TBD#1')
+            else:
+                if i >= len(args.args):
+                    raise FunctionException('TBD#2')
+                elif args.args[i].type != t:
+                    raise FunctionException('TBD#3')
+                
+def _check_args(args: 'NSFunction.Arguments', bound: NSValue = None, arguments: Union[tuple[Union[NSValue,ellipsis]],list[tuple[Union[NSValue,ellipsis]]]] = None):
+    if bound != None: 
+        _check_bound_to(args, bound)
+    if arguments != None: 
+        _check_called_with(args, arguments)
 
 class NSTypes:
 
     @NSValue.make_class
     class Function:
-        def bind(ctx: 'NSEContext', args: 'NSFunction.Arguments') -> NSValue:
+        def bind(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments') -> NSValue:
             f = args.bound
             if not isinstance(f,NSValue) or f.type != NSTypes.Function:
-                raise NSEException.fromNode('Unbound method call',ctx.top().node)
+                raise FunctionException('Unbound method call')
             if len(args.args) == 0:
-                raise NSEException.fromNode('Missing bind target',ctx.top().node)
+                raise FunctionException('Missing bind target')
             b = args.args[0]
             return NSValue({'__function':{'func':f.data['__function'].get('func',None),'bound':b}},f.type,f.props|{'bound':b})
 
     @NSValue.make_class
     class String:
+        @NSValue.make_trait(NSTraits.Op.Add)
+        class __trait__Add:
+            def add(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.String, (NSTypes.String,))
+                other, = args.args
+                return NSValue.String(args.bound.data+other.data)
+            
+        @NSValue.make_trait(NSTraits.Op.Mul)
+        class __trait__Mul:
+            def mul(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.String, (NSTypes.Number,))
+                other, = args.args
+                return NSValue.String(args.bound.data*other.data)
+
         @NSValue.make_trait(NSTraits.Op.Lt)
         class __trait__Lt:
-            def lt(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+            def lt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.String, (NSTypes.String,))
                 other, = args.args
-                if other.type != NSTypes.String:
-                    return None
                 return TRUE if args.bound.data<other.data else FALSE
             
         @NSValue.make_trait(NSTraits.Op.Gt)
         class __trait__Gt:
-            def gt(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+            def gt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.String, (NSTypes.String,))
                 other, = args.args
-                if other.type != NSTypes.String:
-                    return None
                 return TRUE if args.bound.data>other.data else FALSE
             
         @NSValue.make_trait(NSTraits.Op.Eq)
         class __trait__Eq:
-            def eq(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+            def eq(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.String, (NSTypes.String,))
                 other, = args.args
-                if other.type != NSTypes.String:
-                    return FALSE
                 return TRUE if args.bound.data==other.data else FALSE
 
     @NSValue.make_class
     class Number:
         @NSValue.make_trait(NSTraits.Op.Lt)
         class __trait__Lt:
-            def lt(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+            def lt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Number, (NSTypes.Number,))
                 other, = args.args
-                if other.type != NSTypes.Number:
-                    return None
                 return TRUE if args.bound.data<other.data else FALSE
             
         @NSValue.make_trait(NSTraits.Op.Gt)
         class __trait__Gt:
-            def gt(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+            def gt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Number, (NSTypes.Number,))
                 other, = args.args
-                if other.type != NSTypes.Number:
-                    return None
                 return TRUE if args.bound.data>other.data else FALSE
             
         @NSValue.make_trait(NSTraits.Op.Add)
         class __trait__Add:
-            def add(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+            def add(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Number, (NSTypes.Number,))
                 other, = args.args
-                if other.type != NSTypes.Number:
-                    return None
                 return NSValue.Number(args.bound.data+other.data)
             
+        @NSValue.make_trait(NSTraits.Op.Sub)
+        class __trait__Sub:
+            def sub(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Number, (NSTypes.Number,))
+                other, = args.args
+                return NSValue.Number(args.bound.data-other.data)
+
+        @NSValue.make_trait(NSTraits.Op.Mul)
+        class __trait__Mul:
+            def mul(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Number, (NSTypes.Number,))
+                other, = args.args
+                return NSValue.Number(args.bound.data*other.data)
+            
+        @NSValue.make_trait(NSTraits.Op.Div)
+        class __trait__Div:
+            def div(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Number, (NSTypes.Number,))
+                other, = args.args
+                return NSValue.Number(args.bound.data/other.data)
+
         @NSValue.make_trait(NSTraits.Op.Eq)
         class __trait__Eq:
-            def eq(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+            def eq(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Number, (NSTypes.Number,))
                 other, = args.args
-                if other.type != NSTypes.Number:
-                    return FALSE
-                return TRUE if args.bound.data==other.data else FALSE
+                return NSValue.Boolean(args.bound.data==other.data)
             
     @NSValue.make_class
     class Array:
         def __init__( self: NSValue ):
             pass
         
-        def push( ctx: 'NSEContext', args: 'NSFunction.Arguments' ) -> NSValue:
-            if not isinstance(args.bound,NSValue) or args.bound.type != NSTypes.Array:
-                raise NSEException.fromNode('Unbound method call',ctx.top().node)
+        def push( ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments' ) -> NSValue:
+            _check_args(args, NSTypes.Array)
             args.bound.data['items'].append(args.args[0] if len(args.args) >= 1 else NULL)
             return NULL
         
         @NSValue.make_trait(NSTraits.Op.Add)
         class __trait__Add:
-            def add(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+            def add(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
                 other, = args.args
                 if other.type != NSTypes.Array:
                     return None
@@ -485,27 +567,21 @@ class NSTypes:
             self.data['parents'] = []
             self.data['children'] = []
         
-        def connect( ctx: 'NSEContext', args: 'NSFunction.Arguments' ) -> NSValue:
-            if not isinstance(args.bound,NSValue) or args.bound.type != NSTypes.And:
-                raise NSEException.fromNode('Unbound method call',ctx.top().node)
+        def connect( ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments' ) -> NSValue:
+            _check_bound_to(args, NSTypes.And)
             for i, arg in enumerate(args.args):
                 if not isinstance(arg,NSValue) or arg.type != NSTypes.And:
-                    raise NSEException.fromNode('Invalid argument #%d'%(i+1,),ctx.top().node)
+                    raise FunctionException('Invalid argument #%d'%(i+1,))
                 args.bound.data['children'].append(arg)
                 arg.data['parents'].append(args.bound)
             return NULL
-
-        # @NSValue.make_trait(NSTraits.ToString)
-        # class __trait__toString:
-        #     def toString(ctx: 'NSEContext', args: 'NSFunction.Arguments') -> NSValue:
-        #         return NSValue.String('[And Gate]')
             
         @NSValue.make_trait(NSTraits.Op.Gt)
         class __trait__Gt:
-            def gt(ctx: 'NSEContext', args: 'NSFunction.Arguments'):
+            def gt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
                 other, = args.args
                 if other.type != NSTypes.And:
-                    raise NSEException.fromNode('Invalid connection target',ctx.top().node.right)
+                    raise FunctionException('Invalid connection target')
                 args.bound.data['children'].append(other)
                 other.data['parents'].append(args.bound)
                 return NULL
@@ -573,554 +649,245 @@ class NSEFrame:
         
     def __call__( self, vars: Optional[dict] = None ) -> 'NSEFrame':
         return NSEFrame(self.vars.extend(vars),self)
-    
-class NSEExecutor:
-    
-    def __init__(self):
-        raise RuntimeError('That should not have happened')
-    
-    def next( self, ctx: 'NSEContext' ):
-        raise RuntimeError('That should not have happened')
-    
-_executors : dict[Type[ns.Node],Type[NSEExecutor]] = {}
+
+NSEExecutor = Callable[[ns.Node,NSEFrame,'NSEContext'],NSValue]
+_executors : dict[Type[ns.Node],NSEExecutor] = {}
+
 class NSEExecutors:
     
-    executors : dict[Type[ns.Node],Type[NSEExecutor]] = {}
+    executors : dict[Type[ns.Node],NSEExecutor] = {}
     
-    E = TypeVar('E',bound=Type[NSEExecutor])
+    E = TypeVar('E',bound=NSEExecutor)
     def _executor( t: Type[ns.Node] ) -> Callable[[E],E]:
-        def __executor( cls ):
-            _executors[t] = cls
-            return cls
+        def __executor( fun ):
+            _executors[t] = fun
+            return fun
         return __executor
     
     @_executor(ns.NodeBlock)
-    class Block(NSEExecutor):
-    
-        node : ns.NodeBlock
-    
-        i : int
-        
-        def __init__(self, node:ns.NodeBlock):
-            self.node = node
-            self.i = 0
-            
-        def next( self, ctx: 'NSEContext' ):
-            v = ctx.pop_value_any()
-            state = ctx.top()
-            if self.i >= len(state.node.children):
-                ctx.pop()
-                if len(ctx.callstack):
-                    ctx.push_value(v or NULL)
-                return
-            ctx.eval(state.node.children[self.i],state.frame)
-            self.i += 1
+    def Block( node: ns.NodeBlock, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        v = NULL
+        for node in node.children:
+            v = ctx.exec(node,frame)
+        return v
             
     @_executor(ns.NodeExpression)
-    class Expression(NSEExecutor):
-        
-        node : ns.NodeExpression
-        
-        def __init__(self, node:ns.NodeExpression):
-            self.node = node
-            
-        def next( self, ctx: 'NSEContext' ):
-            state = ctx.top()
-            if len(state.stack):
-                v = ctx.pop_value()
-                ctx.pop()
-                ctx.push_value(v)
-                return
-            ctx.eval(state.node.expression,state.frame)
-            
-    @_executor(ns.NodeName)
-    class Name(NSEExecutor):
-        
-        node : ns.NodeName
-
-        def __init__(self, node:ns.NodeName):
-            self.node = node
-            
-        def next( self, ctx: 'NSEContext' ):
-            state = ctx.top()
-            found, var = state.frame.vars.get(state.node.name)
-            if not found:
-                raise NSEException.fromNode('No such variable exists in this scope',self.node)
-            ctx.pop()
-            ctx.push_value(var)
-            
-    @_executor(ns.NodeLet)
-    class Let(NSEExecutor):
-        
-        node : ns.NodeLet
+    def Expression( node: ns.NodeExpression, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        return ctx.exec(node.expression,frame)
     
-        value : bool
-        
-        def __init__(self,node:ns.NodeLet):
-            self.node = node
-            self.value = False
-            
-        def next( self, ctx: 'NSEContext' ):
-            state = ctx.top()
-            if self.value:
-                val = ctx.pop_value()
-                state.frame.vars.new(self.node.name,val)
-                ctx.pop()
-                ctx.push_value(val)
-            else:
-                if self.node.expr:
-                    ctx.eval(self.node.expr,state.frame)
-                self.value = True
-            
+    @_executor(ns.NodeName)
+    def Name( node: ns.NodeName, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        found, value = frame.vars.get(node.name)
+        if not found:
+            raise NSEException.fromNode('No such variable exists in this scope',node)
+        return value
+    
+    @_executor(ns.NodeLet)
+    def Let( node: ns.NodeLet, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        value = ctx.exec(node.expr,frame) if node.expr != None else NULL
+        frame.vars.new(node.name,value)
+        return value
+                
     @_executor(ns.NodeCall)
-    class Call(NSEExecutor):
+    def Call( node: ns.NodeCall, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        value = ctx.exec(node.value,frame)
+        kwargs = {} # TODO: Implement keyword arguments (could probably also do something about them in the parser)
+        args = [ctx.exec(arg,frame) for arg in node.args]
         
-        node : ns.NodeCall
+        f = value.data['__function'].get('func',None)
+        if not f or not isinstance(f,NSFunction):
+            raise NSEException.fromNode('%s is not callable'%('null' if value.type==NSKind.Null else 'Value',),node)
         
-        func   : NSFunction
-        fn     : NSValue
-        args   : list[NSValue]
-        kwargs : dict[str,NSValue]
-        i      : int
-        k      : Union[str,None]
-        c      : bool
-        
-        def __init__(self, node:ns.NodeName):
-            self.node = node
-            self.func = None
-            self.args = []
-            self.kwargs = {}
-            self.i = 0
-            self.k = None
-            self.c = False
-            
-        def _process_arg(self,ctx):
-            state = ctx.top()
-            arg = state.pop_any()
-            if arg:
-                if self.k:
-                    self.kwargs[self.k] = arg
-                    self.k = None
-                else:
-                    self.args.append(arg)
-            
-        def next( self, ctx: 'NSEContext' ):
-            state = ctx.top()
-            if self.func == None:
-                if len(state.stack):
-                    v = state.pop()
-                    f = v.data['__function'].get('func',None) if v.type == NSTypes.Function else v.get('',False,True)
-                    if not f or not isinstance(f,NSFunction):
-                        raise NSEException.fromNode('%s is not callable'%('null' if v.type==NSKind.Null else 'Value',),self.node)
-                    self.func = f
-                    self.fn = v
-                else:
-                    ctx.eval(state.node.value,state.frame)
-                return
-            if self.c:
-                v = ctx.pop_value()
-                ctx.pop()
-                ctx.push_value(v)
-                return
-            if self.i >= len(state.node.args):
-                self.c = True
-                self._process_arg(ctx)
-                self.func.call(ctx,NSFunction.Arguments(self.args,self.kwargs,self.fn,self.fn.data['__function'].get('bound',None)))
-                return
-            self._process_arg(ctx)
-            ctx.eval(state.node.args[self.i],state.frame)
-            self.i += 1
-            
+        try:
+            return f.call(ctx,frame,NSFunction.Arguments(args,kwargs,value,value.data['__function'].get('bound',None)))
+        except FunctionException as error:
+            raise NSEException.fromNode(error.message or '',node)
+    
     @_executor(ns.NodeAccessDot)
-    class AccessDot(NSEExecutor):
-        
-        node : ns.NodeAccessDot
-        
-        def __init__(self, node:ns.NodeAccessDot):
-            self.node = node
-            self.value = None
-            
-        def next( self, ctx: 'NSEContext' ):
-            state = ctx.top()
-            value = state.pop_any()
-            if not value:
-                if self.node.node == None:
-                    found, v = state.frame.vars.get('self')
-                    ctx.push_value(v if found else NULL)
-                else:
-                    ctx.eval(self.node.node,state.frame)
-            else:
-                ctx.pop()
-                ctx.push_value(value.get(self.node.prop) or NULL)
-                
+    def AccessDot( node: ns.NodeAccessDot, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        value = None
+        if node.node:
+            value = ctx.exec(node.node, frame)
+        else:
+            found, value = frame.vars.get('self')
+            if not found:
+                raise NSEException.fromNode('Self does not exist in this scope',node)
+        return value.get(node.prop) or NULL
+
     @_executor(ns.NodeAccessColon)
-    class AccessColon(NSEExecutor):
-        
-        node : ns.NodeAccessColon
-        
-        def __init__(self, node:ns.NodeAccessColon):
-            self.node = node
-            self.value = None
-            
-        def next( self, ctx: 'NSEContext' ):
-            state = ctx.top()
-            value = state.pop_any()
-            if not value:
-                if self.node.node == None:
-                    found, v = state.frame.vars.get('self')
-                    ctx.push_value(v if found else NULL)
-                else:
-                    ctx.eval(self.node.node,state.frame)
-            else:
-                ctx.pop()
-                val = value.get(self.node.prop,False,True) or NULL
-                if val.type == NSTypes.Function:
-                    val = NSValue({'__function':{'func':val.data['__function'].get('func',None),'bound':value}},val.type,val.props)
-                ctx.push_value(val)
-                
+    def AccessColon( node: ns.NodeAccessColon, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        value = None
+        if node.node:
+            value = ctx.exec(node.node, frame)
+        else:
+            found, value = frame.vars.get('self')
+            if not found:
+                raise NSEException.fromNode('Self does not exist in this scope',node)
+        val =value.get(node.prop,False,True) or NULL
+        if val.type == NSTypes.Function:
+            val = NSValue({'__function':{'func':val.data['__function'].get('func',None),'bound':value}},val.type,val.props)
+        return val
+    
     @_executor(ns.NodeAccessColonDouble)
-    class AccessColonDouble(NSEExecutor):
-        
-        node : ns.NodeAccessColonDouble
-        
-        def __init__(self, node:ns.NodeAccessColonDouble):
-            self.node = node
-            self.value = None
-            
-        def next( self, ctx: 'NSEContext' ):
-            state = ctx.top()
-            value = state.pop_any()
-            if not value:
-                if self.node.node == None:
-                    found, v = state.frame.vars.get('self')
-                    ctx.push_value(v if found else NULL)
-                else:
-                    ctx.eval(self.node.node,state.frame)
-            else:
-                ctx.pop()
-                ctx.push_value(value.get(self.node.prop,False,True) or NULL)
+    def AccessColonDouble( node: ns.NodeAccessColonDouble, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        value = None
+        if node.node:
+            value = ctx.exec(node.node, frame)
+        else:
+            found, value = frame.vars.get('self')
+            if not found:
+                raise NSEException.fromNode('Self does not exist in this scope',node)
+        val = value.get(node.prop,False,True) or NULL
+        return val
+
                 
     @_executor(ns.NodeOperatorBinary)
-    class OperatorBinary(NSEExecutor):
+    def OperatorBinary( node: ns.NodeOperatorBinary, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        op = node.op.t
         
-        node : ns.NodeOperatorBinary
-        
-        left : NSValue
-        
-        def __init__(self, node:ns.NodeOperatorBinary):
-            self.node = node
-            self.left = None
+        if op == '=':
             
-        def next( self, ctx: 'NSEContext' ):
-            state = ctx.top()
-            value = state.pop_any()
-            if not self.left:
-                if value:
-                    self.left = value
-                    ctx.eval(self.node.right,state.frame)
-                else:
-                    ctx.eval(self.node.left,state.frame)
-            else:
-                left, right = self.left, value
-                op = self.node.op.t
+            if isinstance(node.left,ns.NodeName):  
+                right = ctx.exec(node.right)
+                print(frame.vars.set(node.left.name,right))
+                return right
                 
-                if op == '=':
-                    
-                    if isinstance(self.node.left,ns.NodeName):  
-                        state.frame.vars.set(self.node.left.name,right)
-                        
-                    else:
-                        raise NSEException.fromNode('Unimplemented assign target \'%s\''%(type(self.node.left).__name__,),self.node.left)
-                    
-                    ctx.pop()
-                    ctx.push_value(right)
-                    
-                else:
-                    
-                    op_data = {
-                        '>' : ( NSTraits.Op.Gt, 'gt' ),
-                        '<' : ( NSTraits.Op.Lt, 'lt' ),
-                        '+' : ( NSTraits.Op.Add, 'add' ),
-                        '-' : ( NSTraits.Op.Sub, 'sub' ),
-                        '==' : ( NSTraits.Op.Eq, 'eq' )
-                    }.get(op,None)
-                    
-                    result = NULL
-                    if left.type:
-                        method = left.get_trait_method(op_data[0],op_data[1])
-                        if method:
-                            method.call(ctx,NSFunction.Arguments([right],{},method,left))
-                            result = ctx.pop_value_any()
-                            # TODO: Add support for NS functions
-                        elif op == '==':
-                            result = TRUE if left == right else FALSE
-                        else:
-                            raise NSEException.fromToken('Unsupported operation \'%s\' between `%s` and `%s`'%(op,toNSString(ctx,right.type),toNSString(ctx,left.type)),self.node.op)
-                    
-                    ctx.pop()
-                    ctx.push_value(result)
-                    
+            else:
+                raise NSEException.fromNode('Assignment to \'%s\' is not currently supported'%(type(node.left).__name__,),node.left)
+            
+        elif op == '==':
+            
+            left: NSValue = ctx.exec(node.left, frame)
+            right: NSValue = ctx.exec(node.right, frame)
+            
+            if left.type in (NSKind.Class, NSKind.Trait, NSKind.Null):
+                return NSValue.Boolean(left == right)
+            
+            equals = left.get_trait_method(NSTraits.Op.Eq, 'eq')
+            
+            if not equals:
+                return NSValue.Boolean(left == right)
+            
+            result = equals.call(ctx, frame, NSFunction.Arguments([right],{},equals,left))
+            
+            if result.type != NSTypes.Boolean:
+                raise NSEException.fromNode('Non-boolean return value from trait Op.Eq', node)
+            
+            return result
+        
+        else:
+            
+            left = ctx.exec(node.left, frame)
+            right = ctx.exec(node.right, frame)
+            
+            op_data = {
+                '>' : ( NSTraits.Op.Gt, 'gt' ),
+                '<' : ( NSTraits.Op.Lt, 'lt' ),
+                '+' : ( NSTraits.Op.Add, 'add' ),
+                '-' : ( NSTraits.Op.Sub, 'sub' ),
+                '*' : ( NSTraits.Op.Mul, 'mul' ),
+                '/' : ( NSTraits.Op.Div, 'div' ),
+            }.get(op,None)
+            
+            if not op_data:
+                raise NSEException.fromToken('Unimplemented operation \'%s\''%(op),node.op)
+            
+            if left.type:
+                method = left.get_trait_method(op_data[0], op_data[1])
+                if method:
+                    try:
+                        return method.call(ctx, frame,  NSFunction.Arguments([right],{},method,left))
+                    except FunctionException as error:
+                        raise NSEException.fromNode(error.message or '',node)
+                raise NSEException.fromToken('Unsupported operation \'%s\' between `%s` and `%s`'%(op,toNSString(ctx,frame,left.type),toNSString(ctx,frame,right.type)),node.op)
+            
+            return NULL
+        
     @_executor(ns.NodeIf)
-    class If(NSEExecutor):
+    def If( node: ns.NodeIf, frame: NSEFrame, ctx: 'NSEContext' ):
+        value = ctx.exec(node.condition, frame)
         
-        node : ns.NodeIf
-        value : NSValue
-        ran : bool
+        # TODO: Add truthiness trait?
+        if value.type == NSKind.Null:
+            res = False
+        elif value.type == NSTypes.String:
+            res = len(value.data) > 0
+        elif value.type == NSTypes.Number:
+            res = value.data != 0
+        elif value.type == NSTypes.Boolean:
+            res = value.data['__boolean']
         
-        def __init__(self, node:ns.NodeIf):
-            self.node = node
-            self.value = None
-            self.ran = False
-            
-        def next( self, ctx: 'NSEContext' ):
-            state = ctx.top()
-            v = state.pop_any()
-            if not v:
-                ctx.eval(self.node.condition,state.frame)
-            else:
-                if self.ran:
-                    ctx.pop()
-                    ctx.push_value(v or NULL)
-                else:
-                    self.ran = True
-                    if v.type == NSKind.Null:
-                        res = False
-                    elif v.type == NSTypes.String:
-                        res = len(v.data) > 0
-                    elif v.type == NSTypes.Number:
-                        res = v.data != 0
-                    elif v.type == NSTypes.Boolean:
-                        res = v.data['__boolean']
-                    node = self.node.expression if res else \
-                           self.node.otherwise
-                    if node:
-                        ctx.eval(node,state.frame)
-                    
+        node = node.expression if res else \
+               node.otherwise
+        
+        if node:
+            ctx.exec(node,frame)
+
     @_executor(ns.NodeString)
-    class String(NSEExecutor):
-        
-        node : ns.NodeString
-        
-        def __init__(self, node:ns.NodeString):
-            self.node = node
-            
-        def next( self, ctx: 'NSEContext' ):
-            ctx.pop()
-            ctx.push_value(NSValue.String(self.node.value))
-            
+    def String( node: ns.NodeString, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        return NSValue.String(node.value)
+
     @_executor(ns.NodeNumber)
-    class Number(NSEExecutor):
-        
-        node : ns.NodeNumber
-        
-        def __init__(self, node:ns.NodeNumber):
-            self.node = node
-            
-        def next( self, ctx: 'NSEContext' ):
-            ctx.pop()
-            ctx.push_value(NSValue.Number(self.node.value))
-            
+    def Number( node: ns.NodeNumber, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        return NSValue.Number(node.value)
+
     @_executor(ns.NodeFunction)
-    class Function(NSEExecutor):
-        
-        node : ns.NodeFunction
-        
-        def __init__(self, node:ns.NodeFunction):
-            self.node = node
-            
-        def next( self, ctx: 'NSEContext' ):
-            ctx.pop()
-            frame = ctx.top().frame
-            func = NSFunctionCode(self.node,frame)
-            value = NSValue({'__function':{'func':func,'bound':None}},NSTypes.Function)
-            ctx.push_value(value)
-            if self.node.name:
-                frame.vars.new(self.node.name,value)
-                
-    @_executor(ns.NodeReturn)
-    class Return(NSEExecutor):
-        
-        node : ns.NodeReturn
-        
-        def __init__(self, node:ns.NodeReturn):
-            self.node = node
-            
-        def next( self, ctx: 'NSEContext' ):
-            retval = ctx.pop_value_any() if self.node.value else NULL
-            if not retval:
-                ctx.eval(self.node.value,ctx.top().frame)
-            else:
-                ctx.pop()
-                state = None
-                for _ in range(500):
-                    s = ctx.pop()
-                    if isinstance(s.node,ns.parser.NodeCall):
-                        state = s
-                        break
-                if not state:
-                    raise NSEException.fromNode('Failed to trace parent function call',self.node)
-                ctx.pop()
-                ctx.push_value(retval)
-                
+    def Function( node: ns.NodeFunction, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        func = NSFunctionCode(node,frame)
+        value = NSValue({'__function':{'func':func,'bound':None}},NSTypes.Function)
+        if node.name:
+            frame.vars.new(node.name,value)
+        return value
+
     @_executor(ns.NodeArray)
-    class Array(NSEExecutor):
-        
-        node : ns.NodeArray
-        
-        items : list[NSValue]
-        
-        def __init__( self, node: ns.NodeArray ):
-            self.node = node
-            self.items = []
-            
-        def next( self, ctx: 'NSEContext' ):
-            state = ctx.top()
-            v = state.pop_any()
-            if v != None:
-                self.items.append(v)
-            if len(self.items) >= len(self.node.items):
-                ctx.pop()
-                ctx.push_value(NSValue.Array(self.items))
-            else:
-                ctx.eval(self.node.items[len(self.items)],state.frame)
+    def Array( node: ns.NodeArray, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        return NSValue.Array([ctx.exec(item,frame) for item in node.items])
+
+    @_executor(ns.NodeReturn)
+    def Return( node: ns.NodeReturn, frame: NSEFrame, ctx: 'NSEContext' ):
+        raise RewindReturn(ctx.exec(node.value,frame) if node.value else NULL)
                 
     @_executor(ns.NodeFor)
-    class For(NSEExecutor):
-        
-        node : ns.NodeFor
-        
-        iterable : NSValue
-        items : NSValue
-        i : int
-        
-        def __init__( self, node: ns.NodeFor ) -> None:
-            self.node = node
-            self.iterable = None
-            self.i = 0
-            
-        def next( self, ctx: 'NSEContext' ):
-            state = ctx.top()
-            if self.iterable == None:
-                v = state.pop_any()
-                if v != None:
-                    self.iterable = v
-                    if self.iterable.type == NSTypes.Array:
-                        self.items = self.iterable
-                    else:
-                        itemsFn = self.iterable.get_trait_method(NSTraits.Iterator,'items')
-                        if not itemsFn:
-                            raise NSEException.fromNode('Value is not iterable',self.node.iterable)
-                        itemsFn.call(ctx,NSFunction.Arguments([],{},itemsFn,self.iterable))
-                else:
-                    ctx.eval(self.node.iterable,state.frame)
-            elif self.items == None:
-                self.items = state.pop()
-            else:
-                if self.i >= len(self.items.data['items']):
-                    ctx.pop()
-                else:
-                    v = {
-                        self.node.name_it.t: self.items.data['items'][self.i]
-                    }
-                    if self.node.name_i != None:
-                        v[self.node.name_i.t] = NSValue.Number(self.i)
-                    ctx.eval(self.node.body,state.frame(v))
-                    self.i += 1
-                    
+    def For( node: ns.NodeFor, frame: NSEFrame, ctx: 'NSEContext' ):
+        iterable = ctx.exec(node.iterable, frame)
+        items = []
+        if iterable.type == NSTypes.Array:
+            items = iterable
+        else:
+            itemsFn = iterable.get_trait_method(NSTraits.Iterator,'items')
+            if not itemsFn:
+                raise NSEException.fromNode('Value is not iterable',node.iterable)
+            items = itemsFn.call(ctx,frame,NSFunction.Arguments([],{},itemsFn,iterable))
+        for i, item in enumerate(items.data['items']):
+            v = {
+                node.name_it.t: item
+            }
+            if node.name_i != None:
+                v[node.name_i.t] = NSValue.Number(i)
+            ctx.exec(node.body,frame(v))
+
     @_executor(ns.NodeRefExpression)
-    class RefExpression(NSEExecutor):
-        
-        node : ns.NodeRefExpression
-        
-        value : NSValue
-        
-        def __init__( self, node: ns.NodeRefExpression ):
-            self.node = node
-            self.value = None
-            
-        def next(self, ctx: 'NSEContext'):
-            state = ctx.top()
-            if not self.value:
-                v = state.pop_any()
-                if v != None:
-                    self.value = v
-                else:
-                    ctx.eval(self.node.value,state.frame)
-            else:
-                v = state.pop_any()
-                if v != None:
-                    ctx.pop()
-                    # ctx.push_value(v if self.node.ref else self.value)
-                    ctx.push_value(self.value if self.node.ref else v)
-                else:
-                    name = self.node.name.t if self.node.name != None else 'it'
-                    ctx.eval(self.node.expression,state.frame({name:self.value,'self':self.value}))
+    def RefExpression( node: ns.NodeRefExpression, frame: NSEFrame, ctx: 'NSEContext' ):
+        value = ctx.exec(node.value,frame)
+        name = node.name.t if node.name != None else 'it'
+        out = ctx.exec(node.expression,frame({name:value,'self':value}))
+        return value if node.ref else out
                     
 NSEExecutors.executors = _executors
 del _executors
         
-class NSEContext:
-    
-    class State:
-        
-        frame : NSEFrame
-        node  : ns.Node
-        stack : list[NSValue]
-        exec  : NSEExecutor
-        
-        def __init__(self, frame: NSEFrame, node: ns.Node, stack: Union[list[NSValue],None], executor: NSEExecutor):
-            self.frame = frame
-            self.node = node
-            self.stack = stack or []
-            self.exec = executor
-            
-        def push(self, value: NSValue):
-            self.stack.append(value)
-            
-        def pop(self) -> NSValue:
-            return self.stack.pop()
-        
-        def pop_any(self) -> Optional[NSValue]:
-            return self.stack.pop() if len(self.stack) else None
-        
-    callstack : list[State]
-    
-    def __init__(self):
-        self.callstack = []
-        
-    def eval(self, node: ns.Node, frame: NSEFrame):
+class NSEContext:    
+    def exec(self, node: ns.Node, frame: NSEFrame) -> NSValue:
         e = NSEExecutors.executors.get(type(node))
         if not e:
             raise ValueError('Unsupported node type `%s`'%(type(node).__name__,))
+        if isinstance(e,type):
+            raise ValueError('Legacy node executor for `%s`'%(type(node).__name__))
         if e == NSEExecutors.Block:
             frame = frame()
-        self.callstack.append(NSEContext.State(frame,node,[],e(node)))
-        return self
-        
-    def top(self) -> State:
-        return self.callstack[-1]
+        return e(node,frame,self)
     
-    def pop(self) -> State:
-        return self.callstack.pop()
-    
-    def push(self, state: State):
-        self.callstack.append(state)
-        return self
-        
-    def top_value(self) -> NSValue:
-        return self.callstack[-1].stack[-1]
-        
-    def pop_value(self) -> NSValue:
-        return self.callstack[-1].stack.pop()
-    
-    def pop_value_any(self) -> Optional[NSValue]:
-        return self.callstack[-1].stack.pop() if len(self.callstack[-1].stack) else None
-    
-    def push_value(self, value: NSValue):
-        self.callstack[-1].stack.append(value)
-        return self
-    
-def toNSString(ctx: NSEContext, v:NSValue, h:bool=True, rep:bool=False) -> str:
+def toNSString(ctx: NSEContext, frame: NSEFrame, v:NSValue, h:bool=True, rep:bool=False) -> str:
     if v.type == NSKind.Null:
         return 'null'
     elif v.type == NSKind.Class:
@@ -1135,29 +902,29 @@ def toNSString(ctx: NSEContext, v:NSValue, h:bool=True, rep:bool=False) -> str:
     elif v.type == NSTypes.Boolean:
         return ('false','true')[v.data['__boolean']]
     elif v.type == NSTypes.Array:
-        return '['+', '.join(toNSString(ctx,v,rep=True) for v in v.data['items'])+']'
+        return '['+', '.join(toNSString(ctx,frame,v,rep=True) for v in v.data['items'])+']'
     elif h:
         toString = v.get_trait_method(NSTraits.ToString,'toString')
         if toString:
-            toString.call(ctx,NSFunction.Arguments([],{},toString,v))
+            toString.call(ctx,frame,NSFunction.Arguments([],{},toString,v))
             r = ctx.pop_value_any()
             if isinstance(r,NSValue) and r.type == NSTypes.String:
-                return toNSString(ctx, r, False)
+                return toNSString(ctx, frame, r, False)
     cls = v.type.data.get('__class',{}).get('class',None)
     return '<%s @%s>'%(cls.__name__,hex(id(v))[2:]) if cls else repr(v)
     
 @NSValue.Function
-def ns_print(ctx: NSEContext, args: NSFunction.Arguments) -> NSValue:
+def ns_print(ctx: NSEContext, frame: NSEFrame, args: NSFunction.Arguments) -> NSValue:
     s = ''
     for i, v in enumerate(args.args):
-        s += toNSString(ctx, v, True)
+        s += toNSString(ctx, frame, v, True)
         if i < len(args.args)-1:
             s += ' '
     print(s)
     return NULL
     
 @NSValue.Function
-def ns_and(ctx: NSEContext, args: NSFunction.Arguments) -> NSValue:
+def ns_and(ctx: NSEContext, frame: NSEFrame, args: NSFunction.Arguments) -> NSValue:
     return NSTypes.And.instantiate()
     
 globals = NSEVars({
@@ -1171,15 +938,11 @@ globals = NSEVars({
 root_frame = NSEFrame(globals.extend(),None)
 
 context = NSEContext()
-context.push(NSEContext.State(root_frame,tree,[],NSEExecutors.Block(tree)))
-
 try:
-    while len(context.callstack):
-        top = context.top()
-        # print(type(top.node).__name__,hex(id(top.node)),top.node.tokens.tokens[top.node.i])
-        res = top.exec.next(context)
-        if isinstance(res,NSEException):
-            print(res)
-            break
+    context.exec(tree,root_frame)
+except RewindReturn:
+    print('Return outside function') # TODO: More details, lol
+    exit(1)
 except NSEException as e:
     print(e)
+    exit(1)
