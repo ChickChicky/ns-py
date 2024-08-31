@@ -583,9 +583,8 @@ class NSTypes:
         @NSValue.make_trait(NSTraits.Op.Add)
         class __trait__Add:
             def add(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Array, (NSTypes.Array,))
                 other, = args.args
-                if other.type != NSTypes.Array:
-                    return None
                 return NSValue.Array(args.bound.data['items']+other.data['items'])
                 
     @NSValue.make_class
@@ -610,9 +609,8 @@ class NSTypes:
         @NSValue.make_trait(NSTraits.Op.Gt)
         class __trait__Gt:
             def gt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.And, (NSTypes.And,))
                 other, = args.args
-                if other.type != NSTypes.And:
-                    raise FunctionException('Invalid connection target')
                 args.bound.data['children'].append(other)
                 other.data['parents'].append(args.bound)
                 return NULL
