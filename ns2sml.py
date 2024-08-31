@@ -817,7 +817,7 @@ class NSEExecutors:
             left: NSValue = ctx.exec(node.left, frame)
             right: NSValue = ctx.exec(node.right, frame)
             
-            if left.type in (NSKind.Class, NSKind.Trait, NSKind.Null):
+            if left.type in (NSKind.Class, NSKind.Trait, NSKind.Null, NSKind.Ref):
                 return NSValue.Boolean(left == right)
             
             equals = left.get_trait_method(NSTraits.Op.Eq, 'eq')
@@ -930,6 +930,8 @@ class NSEExecutors:
         # TODO: Add truthiness trait?
         if value.type == NSKind.Null:
             res = False
+        elif value.type == NSKind.Ref:
+            return value.data.type != NSKind.Null
         elif value.type == NSTypes.String:
             res = len(value.data) > 0
         elif value.type == NSTypes.Number:
@@ -1016,6 +1018,8 @@ class NSEContext:
 def toNSString(ctx: NSEContext, frame: NSEFrame, v:NSValue, h:bool=True, rep:bool=False) -> str:
     if v.type == NSKind.Null:
         return 'null'
+    elif v.type == NSKind.Ref:
+        return toNSString(ctx,frame,v.data,rep=True)+'*'
     elif v.type == NSKind.Class:
         cls = v.data.get('__class',{}).get('class',None)
         return '<class %s>'%(cls.__name__) if cls else repr(v)
