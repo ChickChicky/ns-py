@@ -570,6 +570,10 @@ class NSTypes:
             args.bound.data['items'].append(args.args[0] if len(args.args) >= 1 else NULL)
             return NULL
         
+        def pop( ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments' ) -> NSValue:
+            _check_args(args, NSTypes.Array, ())
+            return args.bound.data['items'].pop() if len(args.bound.data['items']) else NULL
+        
         @NSValue.make_trait(NSTraits.Op.Add)
         class __trait__Add:
             def add(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
