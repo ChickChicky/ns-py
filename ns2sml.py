@@ -223,7 +223,7 @@ class NSKind:
     class Class(): pass
     class Trait(): pass
     class Null(): pass
-    class Ptr(): pass
+    class Ref(): pass
 
 
 def impl_trait( target: 'NSValue', trait: 'NSValue' ):
@@ -276,7 +276,7 @@ class NSValue:
     def get( self, prop: str, searchInstance: Optional[bool] = True, searchClass: Optional[bool] = False ) -> 'NSValue':
         if self.type == NSKind.Null:
             return NULL
-        if self.type == NSKind.Ptr:
+        if self.type == NSKind.Ref:
             return self.data.get(prop, searchInstance, searchClass)
         if searchInstance:
             return self.props.get(prop, NULL)
@@ -286,7 +286,7 @@ class NSValue:
     
     S = TypeVar('S',bound='NSValue')
     def set( self, prop: str, value: S ) -> S:
-        if self.type == NSKind.Ptr:
+        if self.type == NSKind.Ref:
             return self.data.set(prop, value)
         if self.type in (NSKind.Null,NSKind.Class,NSKind.Trait):
             pass
@@ -455,7 +455,7 @@ def assign(node: ns.Node, value: NSValue, frame: 'NSEFrame', ctx: 'NSEContext'):
         return
     elif isinstance(node, ns.NodeOperatorPrefix) and node.op.t == '*':
         target = ctx.exec(node.value, frame, False)
-        if target.type != NSKind.Ptr:
+        if target.type != NSKind.Ref:
             raise NSEException.fromToken('Can\'t dereference `%s`'%(toNSString(ctx,frame,value.type),),node.op)
         target.data.data = value.data
         target.data.props = value.props
@@ -890,13 +890,13 @@ class NSEExecutors:
         
         if op == '&':
 
-            return NSValue(ctx.exec(node.value, frame, False), NSKind.Ptr)
+            return NSValue(ctx.exec(node.value, frame, False), NSKind.Ref)
         
         elif op == '*':
             
             value = ctx.exec(node.value, frame)
             
-            if value.type == NSKind.Ptr:
+            if value.type == NSKind.Ref:
                 return value.data
             
             raise NSEException.fromToken('Can\'t dereference `%s`'%(toNSString(ctx,frame,value.type),),node.op)
@@ -991,7 +991,7 @@ class NSEExecutors:
         value = ctx.exec(node.value,frame,not node.ref)
         name = node.name.t if node.name != None else 'it'
         if node.ref:
-            value = NSValue(value, NSKind.Ptr)
+            value = NSValue(value, NSKind.Ref)
         out = ctx.exec(node.expression,frame({name:value,'self':value}))
         return out if node.takeResult else value
                     
