@@ -682,7 +682,7 @@ class NodeExpression ( Node ):
                 ':' :  NodeAccessColon,
                 '::' : NodeAccessColonDouble
             }[a.t]
-            self.buffer.append(cls(self.tokens,a.i,self,v,token.t))
+            self.buffer.append(cls(self.tokens,self.tokens.tokens.index(a),self,v,token.t))
         # Dot and colon accessor operators
         elif token.t in ('.',':','::'):
             if len(self.buffer) > 0 and type(self.buffer[-1]) == Token :
