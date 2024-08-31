@@ -396,8 +396,8 @@ class NSValue:
 class NSTraits:
     
     ToString = NSValue.create_trait(('toString',))
-    
     Iterator = NSValue.create_trait(('items',))
+    Copy = NSValue.create_trait(('copy',))
 
     class Op:
         
@@ -462,6 +462,12 @@ class NSTypes:
 
     @NSValue.make_class
     class String:
+        @NSValue.make_trait(NSTraits.Copy)
+        class __trait__Copy:
+            def copy(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.String, ())
+                return NSValue.String(args.bound.data)
+        
         @NSValue.make_trait(NSTraits.Op.Add)
         class __trait__Add:
             def add(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
@@ -505,6 +511,12 @@ class NSTypes:
 
     @NSValue.make_class
     class Number:
+        @NSValue.make_trait(NSTraits.Copy)
+        class __trait__Copy:
+            def copy(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Number, ())
+                return NSValue.Number(args.bound.data)
+        
         @NSValue.make_trait(NSTraits.Op.Lt)
         class __trait__Lt:
             def lt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
@@ -589,7 +601,11 @@ class NSTypes:
                 
     @NSValue.make_class
     class Boolean:
-        pass
+        @NSValue.make_trait(NSTraits.Copy)
+        class __trait__Copy:
+            def copy(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Boolean, ())
+                return NSValue.Boolean(args.bound.data)
     
     @NSValue.make_class
     class And:
@@ -850,7 +866,7 @@ class NSEExecutors:
                 return value
             except FunctionException as error:
                 raise NSEException.fromNode(error.message or '',node)
-        raise NSEException.fromToken('Unsupported operation \'%s\' for `%s``'%(op,toNSString(ctx,frame,value.type)),node.op)
+        raise NSEException.fromToken('Unsupported operation \'%s\' for `%s`'%(op,toNSString(ctx,frame,value.type)),node.op)
     
     @_executor(ns.NodeOperatorPrefix)
     def OperatorPrefix( node: ns.NodeOperatorPrefix, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
@@ -874,7 +890,7 @@ class NSEExecutors:
                 return result
             except FunctionException as error:
                 raise NSEException.fromNode(error.message or '',node)
-        raise NSEException.fromToken('Unsupported operation \'%s\' for `%s``'%(op,toNSString(ctx,frame,value.type)),node.op)
+        raise NSEException.fromToken('Unsupported operation \'%s\' for `%s`'%(op,toNSString(ctx,frame,value.type)),node.op)
         
     @_executor(ns.NodeIf)
     def If( node: ns.NodeIf, frame: NSEFrame, ctx: 'NSEContext' ):
@@ -950,7 +966,7 @@ NSEExecutors.executors = _executors
 del _executors
         
 class NSEContext:    
-    def exec(self, node: ns.Node, frame: NSEFrame) -> NSValue:
+    def exec(self, node: ns.Node, frame: NSEFrame, attept_copy: bool = True) -> NSValue:
         e = NSEExecutors.executors.get(type(node))
         if not e:
             raise ValueError('Unsupported node type `%s`'%(type(node).__name__,))
@@ -958,7 +974,11 @@ class NSEContext:
             raise ValueError('Legacy node executor for `%s`'%(type(node).__name__))
         if e == NSEExecutors.Block:
             frame = frame()
-        return e(node,frame,self)
+        v = e(node,frame,self)
+        if not attept_copy:
+            return v
+        copy = v.get_trait_method(NSTraits.Copy, 'copy')
+        return copy.call(self, frame, NSFunction.Arguments([],{},copy,v)) if copy else v
     
 def toNSString(ctx: NSEContext, frame: NSEFrame, v:NSValue, h:bool=True, rep:bool=False) -> str:
     if v.type == NSKind.Null:
@@ -979,8 +999,7 @@ def toNSString(ctx: NSEContext, frame: NSEFrame, v:NSValue, h:bool=True, rep:boo
     elif h:
         toString = v.get_trait_method(NSTraits.ToString,'toString')
         if toString:
-            toString.call(ctx,frame,NSFunction.Arguments([],{},toString,v))
-            r = ctx.pop_value_any()
+            r = toString.call(ctx,frame,NSFunction.Arguments([],{},toString,v))
             if isinstance(r,NSValue) and r.type == NSTypes.String:
                 return toNSString(ctx, frame, r, False)
     cls = v.type.data.get('__class',{}).get('class',None)
