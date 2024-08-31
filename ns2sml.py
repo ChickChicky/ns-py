@@ -243,9 +243,10 @@ class NSValue:
     data : dict
     
     conversions = {
-        str: lambda v: NSValue.String(v),
+        str:   lambda v: NSValue.String(v),
         int:   lambda v: NSValue.Number(v),
         float: lambda v: NSValue.Number(v),
+        bool:  lambda v: NSValue.Boolean(v)
     }
     
     conversions_weak = {
