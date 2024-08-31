@@ -284,8 +284,9 @@ class NSValue:
     S = TypeVar('S',bound='NSValue')
     def set( self, prop: str, value: S ) -> S:
         if self.type in (NSKind.Null,NSKind.Class,NSKind.Trait):
-            return None # TODO: THROW ERROR
-        self.props[prop] = value
+            pass
+        else:
+            self.props[prop] = value
         return value
         
     @staticmethod
