@@ -960,10 +960,12 @@ class NSEExecutors:
 
     @_executor(ns.NodeRefExpression)
     def RefExpression( node: ns.NodeRefExpression, frame: NSEFrame, ctx: 'NSEContext' ):
+        if node.ref:
+            raise NSEException.fromToken('References are not supported yet',node.refToken)
         value = ctx.exec(node.value,frame)
         name = node.name.t if node.name != None else 'it'
         out = ctx.exec(node.expression,frame({name:value,'self':value}))
-        return value if node.ref else out
+        return out if node.takeResult else value
                     
 NSEExecutors.executors = _executors
 del _executors

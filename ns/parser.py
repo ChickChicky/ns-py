@@ -738,10 +738,10 @@ class NodeExpression ( Node ):
                 self.buffer.append(NodeCast(self.tokens,ctx.ptr,self,value,ctx.node))
             else:
                 return ParseError.fromToken('Expected expression before type cast', token)
-        elif token.t == '=>':
+        elif token.t == '=>' or token.t == '->':
             if len(self.buffer) and type(self.buffer[-1]) != Token:
                 value = self.buffer.pop()
-                ctx.node = NodeRefExpression(self.tokens,ctx.ptr,self,value)
+                ctx.node = NodeRefExpression(self.tokens,ctx.ptr,self,value,token.t=='=>')
                 self.buffer.append(ctx.node)
             else:
                 return ParseError.fromToken('Expected expression before reference expression', token)
@@ -767,13 +767,17 @@ class NodeRefExpression( Node ):
     expression : Union[NodeExpression,'NodeBlock']
     name       : Union[Token, None]
     ref        : bool
+    takeResult : bool
+    refToken   : Union[Token, None]
     
-    def __init__(self, tokens:Tokens, i:int, parent:Node, value:Node):
+    def __init__(self, tokens:Tokens, i:int, parent:Node, value:Node, takeResult:bool):
         super().__init__(tokens,i,parent)
         self.value = value
         self.expression = None
         self.name = None
         self.ref = False
+        self.takeResult = takeResult
+        self.refToken = None
         
     def feed(self, token:Token, ctx:ParseContext) -> Union[ParseError,None]:
         if self.expression != None:
@@ -792,6 +796,7 @@ class NodeRefExpression( Node ):
             self.name = token
         elif token.t == '&' and self.name == None and not self.ref:
             self.ref = True
+            self.refToken = token
         else:
             return ParseError.fromToken('Expected '+(('an identifier / ' + ('`&` / ' if not self.ref else '')) if self.name == None else '')+'`(` / `{`', token)
         
