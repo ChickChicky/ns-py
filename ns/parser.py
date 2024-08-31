@@ -630,35 +630,38 @@ class NodeExpression ( Node ):
                 else:
                     return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
             # 'Resolves' operators
-            for prec in operators:
-                ops = list(prec.keys())
-                i = 0
-                while i < len(self.buffer):
-                    v = self.buffer[i]
-                    if type(v) == Token and v.t in ops:
-                        kind = prec.get(v.t)
-                        if kind == 'prefix':
-                            if ((i == 0 or type(self.buffer[i-1]) == Token) and i < len(self.buffer)-1) and type(self.buffer[i+1]) != Token:
-                                op = self.buffer.pop(i)
-                                value = self.buffer.pop(i)
-                                self.buffer.insert(i,NodeOperatorPrefix(self.tokens,self.i,self,op,value))
-                                i = 0
-                        elif kind == 'binary':
-                            if i < len(self.buffer)-1 and i > 0 and type(self.buffer[i-1]) != Token and type(self.buffer[i+1]) != Token:
-                                right = self.buffer.pop(i-1)
-                                op = self.buffer.pop(i-1)
-                                left = self.buffer.pop(i-1)
-                                self.buffer.insert(i-1,NodeOperatorBinary(self.tokens,self.i,self,op,left,right))
-                                i = 0
-                        elif kind == 'postfix':
-                            if ((i == len(self.buffer)-1 or type(self.buffer[i+1]) == Token) and i > 0) and type(self.buffer[i-1]) != Token:
-                                value = self.buffer.pop(i-1)
-                                op = self.buffer.pop(i-1)
-                                self.buffer.insert(i-1,NodeOperatorPostfix(self.tokens,ctx.ptr,self,op,value))
-                                i = 0
-                        else:
-                            return ParseError.fromToken('Invalid operation', v)
-                    i += 1
+            for _ in range(500):
+                if not any(isinstance(v, Token) for v in self.buffer):
+                    break
+                for prec in operators:
+                    ops = list(prec.keys())
+                    i = 0
+                    while i < len(self.buffer):
+                        v = self.buffer[i]
+                        if type(v) == Token and v.t in ops:
+                            kind = prec.get(v.t)
+                            if kind == 'prefix':
+                                if ((i == 0 or type(self.buffer[i-1]) == Token) and i < len(self.buffer)-1) and type(self.buffer[i+1]) != Token:
+                                    op = self.buffer.pop(i)
+                                    value = self.buffer.pop(i)
+                                    self.buffer.insert(i,NodeOperatorPrefix(self.tokens,self.i,self,op,value))
+                                    i = 0
+                            elif kind == 'binary':
+                                if i < len(self.buffer)-1 and i > 0 and type(self.buffer[i-1]) != Token and type(self.buffer[i+1]) != Token:
+                                    right = self.buffer.pop(i-1)
+                                    op = self.buffer.pop(i-1)
+                                    left = self.buffer.pop(i-1)
+                                    self.buffer.insert(i-1,NodeOperatorBinary(self.tokens,self.i,self,op,left,right))
+                                    i = 0
+                            elif kind == 'postfix':
+                                if ((i == len(self.buffer)-1 or type(self.buffer[i+1]) == Token) and i > 0) and type(self.buffer[i-1]) != Token:
+                                    value = self.buffer.pop(i-1)
+                                    op = self.buffer.pop(i-1)
+                                    self.buffer.insert(i-1,NodeOperatorPostfix(self.tokens,ctx.ptr,self,op,value))
+                                    i = 0
+                            else:
+                                return ParseError.fromToken('Invalid operation', v)
+                        i += 1
             # Errors out if there are extra operators
             for v in self.buffer:
                 if type(v) == Token:
@@ -691,7 +694,7 @@ class NodeExpression ( Node ):
                 self.buffer.append(token)
         elif token.t == '(':
             # Call operator
-            if len(self.buffer):
+            if len(self.buffer) and not isinstance(self.buffer[-1],Token):
                 value = self.buffer.pop()
                 ctx.node = NodeCall(self.tokens,ctx.ptr,self,value)
                 self.buffer.append(ctx.node)
