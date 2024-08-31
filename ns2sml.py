@@ -406,6 +406,9 @@ class NSTraits:
         Mul = NSValue.create_trait(('mul',))
         Div = NSValue.create_trait(('div',))
         
+        Inc = NSValue.create_trait(('inc',))
+        Dec = NSValue.create_trait(('dec',))
+        
         Eq = NSValue.create_trait(('eq',))
         Gt = NSValue.create_trait(('gt',))
         Lt = NSValue.create_trait(('lt',))
@@ -544,6 +547,18 @@ class NSTypes:
                 _check_args(args, NSTypes.Number, (NSTypes.Number,))
                 other, = args.args
                 return NSValue.Boolean(args.bound.data==other.data)
+            
+        @NSValue.make_trait(NSTraits.Op.Inc)
+        class __trait__Inc:
+            def inc(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Number, ())
+                return NSValue.Number(args.bound.data+1)
+            
+        @NSValue.make_trait(NSTraits.Op.Dec)
+        class __trait__Dec:
+            def dec(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Number, ())
+                return NSValue.Number(args.bound.data-1)
             
     @NSValue.make_class
     class Array:
@@ -804,6 +819,54 @@ class NSEExecutors:
                 raise NSEException.fromToken('Unsupported operation \'%s\' between `%s` and `%s`'%(op,toNSString(ctx,frame,left.type),toNSString(ctx,frame,right.type)),node.op)
             
             return NULL
+        
+    @_executor(ns.NodeOperatorPostfix)
+    def OperatorPostfix( node: ns.NodeOperatorPostfix, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        value = ctx.exec(node.value, frame)
+        
+        op = node.op.t
+        
+        op_data = {
+            '++' : ( NSTraits.Op.Inc, 'inc' ),
+            '--' : ( NSTraits.Op.Dec, 'dec' ),
+        }.get(op,None)
+        
+        if not op_data:
+            raise NSEException.fromToken('Unimplemented operation \'%s\''%(op),node.op)
+
+        method = value.get_trait_method(op_data[0], op_data[1])
+        if method:
+            try:
+                result = method.call(ctx, frame,  NSFunction.Arguments([],{},method,value))
+                assign(node.value, result, frame, ctx)
+                return value
+            except FunctionException as error:
+                raise NSEException.fromNode(error.message or '',node)
+        raise NSEException.fromToken('Unsupported operation \'%s\' for `%s``'%(op,toNSString(ctx,frame,value.type)),node.op)
+    
+    @_executor(ns.NodeOperatorPrefix)
+    def OperatorPrefix( node: ns.NodeOperatorPrefix, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        value = ctx.exec(node.value, frame)
+        
+        op = node.op.t
+        
+        op_data = {
+            '++' : ( NSTraits.Op.Inc, 'inc' ),
+            '--' : ( NSTraits.Op.Dec, 'dec' ),
+        }.get(op,None)
+        
+        if not op_data:
+            raise NSEException.fromToken('Unimplemented operation \'%s\''%(op),node.op)
+
+        method = value.get_trait_method(op_data[0], op_data[1])
+        if method:
+            try:
+                result = method.call(ctx, frame,  NSFunction.Arguments([],{},method,value))
+                assign(node.value, result, frame, ctx)
+                return result
+            except FunctionException as error:
+                raise NSEException.fromNode(error.message or '',node)
+        raise NSEException.fromToken('Unsupported operation \'%s\' for `%s``'%(op,toNSString(ctx,frame,value.type)),node.op)
         
     @_executor(ns.NodeIf)
     def If( node: ns.NodeIf, frame: NSEFrame, ctx: 'NSEContext' ):
