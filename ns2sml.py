@@ -204,27 +204,13 @@ class NSFunctionCode(NSFunction):
                 return ctx.exec(self.func.body,frame)
             except RewindReturn as ret:
                 return ret.value
-    
-class Prop:
-    
-    class Const: pass
-    
-    value  : 'NSValue'
-    getter : Optional['NSFunction']
-    setter : Optional[Union['NSFunction',Const]]
-    
-    def __init__(self, value: 'NSValue', getter: Optional['NSFunction'] = None, setter: Optional[Union['NSFunction',Const]] = None):
-        self.value  = value
-        self.getter = getter
-        self.setter = setter
 
 class NSKind:
-    
+
     class Class(): pass
     class Trait(): pass
     class Null(): pass
     class Ref(): pass
-
 
 def impl_trait( target: 'NSValue', trait: 'NSValue' ):
     if not isinstance(trait,NSValue) or trait.type != NSKind.Trait:
