@@ -497,6 +497,12 @@ class NSTypes:
                 other, = args.args
                 return TRUE if args.bound.data==other.data else FALSE
 
+        @NSValue.make_trait(NSTraits.Op.Dec)
+        class __trait__Dec:
+            def dec(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.String, ())
+                return NSValue.String(args.bound.data[:-1])
+
     @NSValue.make_class
     class Number:
         @NSValue.make_trait(NSTraits.Op.Lt)
