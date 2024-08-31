@@ -443,8 +443,10 @@ def _check_args(args: 'NSFunction.Arguments', bound: NSValue = None, arguments: 
         _check_called_with(args, arguments)
 
 def assign(node: ns.Node, value: NSValue, frame: 'NSEFrame', ctx: 'NSEContext'):
-    if isinstance(node,ns.NodeName):  
-        frame.vars.set(node.name,value)
+    if isinstance(node, ns.NodeName):
+        frame.vars.set(node.name, value)
+    elif isinstance(node, ns.NodeAccessDot):
+        ctx.exec(node.node,frame).set(node.prop, value)
     else:
         raise NSEException.fromNode('Assignment to \'%s\' is not currently supported'%(type(node).__name__,),node)
 
