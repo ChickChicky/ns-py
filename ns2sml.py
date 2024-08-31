@@ -220,12 +220,12 @@ class Prop:
 
 class NSKind:
     
-    class Class():pass
-    
-    class Trait():pass
-    
-    class Null():pass
-    
+    class Class(): pass
+    class Trait(): pass
+    class Null(): pass
+    class Ptr(): pass
+
+
 def impl_trait( target: 'NSValue', trait: 'NSValue' ):
     if not isinstance(trait,NSValue) or trait.type != NSKind.Trait:
         raise TypeError('Trait argument has to be an NSValue Trait')
@@ -276,14 +276,18 @@ class NSValue:
     def get( self, prop: str, searchInstance: Optional[bool] = True, searchClass: Optional[bool] = False ) -> 'NSValue':
         if self.type == NSKind.Null:
             return NULL
+        if self.type == NSKind.Ptr:
+            return self.data.get(prop, searchInstance, searchClass)
         if searchInstance:
-            return self.props.get(prop,NULL)
+            return self.props.get(prop, NULL)
         if searchClass:
-            return self.type.props.get(prop,NULL)
+            return self.type.props.get(prop, NULL)
         return NULL
     
     S = TypeVar('S',bound='NSValue')
     def set( self, prop: str, value: S ) -> S:
+        if self.type == NSKind.Ptr:
+            return self.data.set(prop, value)
         if self.type in (NSKind.Null,NSKind.Class,NSKind.Trait):
             pass
         else:
@@ -445,10 +449,19 @@ def _check_args(args: 'NSFunction.Arguments', bound: NSValue = None, arguments: 
 def assign(node: ns.Node, value: NSValue, frame: 'NSEFrame', ctx: 'NSEContext'):
     if isinstance(node, ns.NodeName):
         frame.vars.set(node.name, value)
+        return
     elif isinstance(node, ns.NodeAccessDot):
         ctx.exec(node.node,frame).set(node.prop, value)
-    else:
-        raise NSEException.fromNode('Assignment to \'%s\' is not currently supported'%(type(node).__name__,),node)
+        return
+    elif isinstance(node, ns.NodeOperatorPrefix) and node.op.t == '*':
+        target = ctx.exec(node.value, frame, False)
+        if target.type != NSKind.Ptr:
+            raise NSEException.fromToken('Can\'t dereference `%s`'%(toNSString(ctx,frame,value.type),),node.op)
+        target.data.data = value.data
+        target.data.props = value.props
+        target.data.type = value.type
+        return
+    raise NSEException.fromNode('Assignment to \'%s\' is not currently supported'%(type(node).__name__,),node)
 
 class NSTypes:
 
@@ -849,9 +862,9 @@ class NSEExecutors:
         
     @_executor(ns.NodeOperatorPostfix)
     def OperatorPostfix( node: ns.NodeOperatorPostfix, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
-        value = ctx.exec(node.value, frame)
-        
         op = node.op.t
+        
+        value = ctx.exec(node.value, frame)
         
         op_data = {
             '++' : ( NSTraits.Op.Inc, 'inc' ),
@@ -873,27 +886,42 @@ class NSEExecutors:
     
     @_executor(ns.NodeOperatorPrefix)
     def OperatorPrefix( node: ns.NodeOperatorPrefix, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
-        value = ctx.exec(node.value, frame)
-        
         op = node.op.t
         
-        op_data = {
-            '++' : ( NSTraits.Op.Inc, 'inc' ),
-            '--' : ( NSTraits.Op.Dec, 'dec' ),
-        }.get(op,None)
-        
-        if not op_data:
-            raise NSEException.fromToken('Unimplemented operation \'%s\''%(op),node.op)
+        if op == '&':
 
-        method = value.get_trait_method(op_data[0], op_data[1])
-        if method:
-            try:
-                result = method.call(ctx, frame,  NSFunction.Arguments([],{},method,value))
-                assign(node.value, result, frame, ctx)
-                return result
-            except FunctionException as error:
-                raise NSEException.fromNode(error.message or '',node)
-        raise NSEException.fromToken('Unsupported operation \'%s\' for `%s`'%(op,toNSString(ctx,frame,value.type)),node.op)
+            return NSValue(ctx.exec(node.value, frame, False), NSKind.Ptr)
+        
+        elif op == '*':
+            
+            value = ctx.exec(node.value, frame)
+            
+            if value.type == NSKind.Ptr:
+                return value.data
+            
+            raise NSEException.fromToken('Can\'t dereference `%s`'%(toNSString(ctx,frame,value.type),),node.op)
+            
+        else:
+            
+            value = ctx.exec(node.value, frame)
+            
+            op_data = {
+                '++' : ( NSTraits.Op.Inc, 'inc' ),
+                '--' : ( NSTraits.Op.Dec, 'dec' ),
+            }.get(op,None)
+            
+            if not op_data:
+                raise NSEException.fromToken('Unimplemented operation \'%s\''%(op),node.op)
+
+            method = value.get_trait_method(op_data[0], op_data[1])
+            if method:
+                try:
+                    result = method.call(ctx, frame,  NSFunction.Arguments([],{},method,value))
+                    assign(node.value, result, frame, ctx)
+                    return result
+                except FunctionException as error:
+                    raise NSEException.fromNode(error.message or '',node)
+            raise NSEException.fromToken('Unsupported operation \'%s\' for `%s`'%(op,toNSString(ctx,frame,value.type)),node.op)
         
     @_executor(ns.NodeIf)
     def If( node: ns.NodeIf, frame: NSEFrame, ctx: 'NSEContext' ):
@@ -960,10 +988,10 @@ class NSEExecutors:
 
     @_executor(ns.NodeRefExpression)
     def RefExpression( node: ns.NodeRefExpression, frame: NSEFrame, ctx: 'NSEContext' ):
-        if node.ref:
-            raise NSEException.fromToken('References are not supported yet',node.refToken)
-        value = ctx.exec(node.value,frame)
+        value = ctx.exec(node.value,frame,not node.ref)
         name = node.name.t if node.name != None else 'it'
+        if node.ref:
+            value = NSValue(value, NSKind.Ptr)
         out = ctx.exec(node.expression,frame({name:value,'self':value}))
         return out if node.takeResult else value
                     
