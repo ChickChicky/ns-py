@@ -438,6 +438,12 @@ def _check_args(args: 'NSFunction.Arguments', bound: NSValue = None, arguments: 
     if arguments != None: 
         _check_called_with(args, arguments)
 
+def assign(node: ns.Node, value: NSValue, frame: 'NSEFrame', ctx: 'NSEContext'):
+    if isinstance(node,ns.NodeName):  
+        frame.vars.set(node.name,value)
+    else:
+        raise NSEException.fromNode('Assignment to \'%s\' is not currently supported'%(type(node).__name__,),node)
+
 class NSTypes:
 
     @NSValue.make_class
@@ -747,13 +753,9 @@ class NSEExecutors:
         
         if op == '=':
             
-            if isinstance(node.left,ns.NodeName):  
-                right = ctx.exec(node.right)
-                print(frame.vars.set(node.left.name,right))
-                return right
-                
-            else:
-                raise NSEException.fromNode('Assignment to \'%s\' is not currently supported'%(type(node.left).__name__,),node.left)
+            right = ctx.exec(node.right, frame)
+            assign(node.left, right, frame, ctx)
+            return right
             
         elif op == '==':
             
