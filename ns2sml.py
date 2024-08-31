@@ -1033,9 +1033,11 @@ root_frame = NSEFrame(globals.extend(),None)
 context = NSEContext()
 try:
     context.exec(tree,root_frame)
-except RewindReturn:
-    print('Return outside function') # TODO: More details, lol
-    exit(1)
+except RewindReturn as ret:
+    if ret.value:
+        if ret.value.type == NSTypes.Number:
+            exit(int(ret.value.data))
+    exit(0)
 except NSEException as e:
     print(e)
     exit(1)
