@@ -272,15 +272,14 @@ class NSValue:
         self.props = props or {}
         self.type = type
         
-    def get( self, prop: str, searchInstance: Optional[bool] = True, searchClass: Optional[bool] = False ) -> Optional['NSValue']:
+    def get( self, prop: str, searchInstance: Optional[bool] = True, searchClass: Optional[bool] = False ) -> 'NSValue':
         if self.type == NSKind.Null:
-            return None # TODO: THROW ERROR
-        v = None
+            return NULL
         if searchInstance:
-            v = self.props.get(prop,None)
-        if searchClass and v == None:
-            v = self.type.props.get(prop,None)
-        return v
+            return self.props.get(prop,NULL)
+        if searchClass:
+            return self.type.props.get(prop,NULL)
+        return NULL
     
     S = TypeVar('S',bound='NSValue')
     def set( self, prop: str, value: S ) -> S:
@@ -757,7 +756,7 @@ class NSEExecutors:
             found, value = frame.vars.get('self')
             if not found:
                 raise NSEException.fromNode('Self does not exist in this scope',node)
-        return value.get(node.prop) or NULL
+        return value.get(node.prop)
 
     @_executor(ns.NodeAccessColon)
     def AccessColon( node: ns.NodeAccessColon, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
@@ -768,7 +767,7 @@ class NSEExecutors:
             found, value = frame.vars.get('self')
             if not found:
                 raise NSEException.fromNode('Self does not exist in this scope',node)
-        val =value.get(node.prop,False,True) or NULL
+        val = value.get(node.prop,False,True)
         if val.type == NSTypes.Function:
             val = NSValue({'__function':{'func':val.data['__function'].get('func',None),'bound':value}},val.type,val.props)
         return val
@@ -782,7 +781,7 @@ class NSEExecutors:
             found, value = frame.vars.get('self')
             if not found:
                 raise NSEException.fromNode('Self does not exist in this scope',node)
-        val = value.get(node.prop,False,True) or NULL
+        val = value.get(node.prop,False,True)
         return val
 
                 
