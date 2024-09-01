@@ -194,11 +194,11 @@ class NSFunctionCode(NSFunction):
                 raise FunctionException('Unexpected extra argument')
         for name, val in mapping.items():
             if val == None:
-                mapping[name] = NULL
+                mapping[name] = NULL()
         frame = self.frame(mapping)
-        frame.vars.new('self',args.bound or NULL)
+        frame.vars.new('self',args.bound or NULL())
         if self.func.body == None:
-            return NULL
+            return NULL()
         else:
             try:
                 return ctx.exec(self.func.body,frame)
@@ -261,14 +261,14 @@ class NSValue:
         
     def get( self, prop: str, searchInstance: Optional[bool] = True, searchClass: Optional[bool] = False ) -> 'NSValue':
         if self.type == NSKind.Null:
-            return NULL
+            return NULL()
         if self.type == NSKind.Ref:
             return self.data.get(prop, searchInstance, searchClass)
         if searchInstance:
-            return self.props.get(prop, NULL)
+            return self.props.get(prop, NULL())
         if searchClass:
-            return self.type.props.get(prop, NULL)
-        return NULL
+            return self.type.props.get(prop, NULL())
+        return NULL()
     
     S = TypeVar('S',bound='NSValue')
     def set( self, prop: str, value: S ) -> S:
@@ -283,7 +283,7 @@ class NSValue:
     @staticmethod
     def sanitize( value: Any ) -> 'NSValue':
         if value == None:
-            return NULL
+            return NULL()
         if type(value) == NSValue:
             return value
         c = NSValue.conversions.get(type(value))
@@ -378,7 +378,7 @@ class NSValue:
     
     @staticmethod
     def Boolean( value: Any ) -> 'NSValue':
-        return NSValue._latevalue({'__boolean':bool(value)},'NSTypes.Boolean')
+        return NSValue._latevalue(bool(value),'NSTypes.Boolean')
     
     @staticmethod
     def Array( items: list['NSValue'] ) -> 'NSValue':
@@ -447,6 +447,8 @@ def assign(node: ns.Node, value: NSValue, frame: 'NSEFrame', ctx: 'NSEContext'):
         target.data.props = value.props
         target.data.type = value.type
         return
+    elif isinstance(node, ns.NodeExpression):
+        assign(node.expression, value, frame, ctx)
     raise NSEException.fromNode('Assignment to \'%s\' is not currently supported'%(type(node).__name__,),node)
 
 class NSTypes:
@@ -489,21 +491,21 @@ class NSTypes:
             def lt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
                 _check_args(args, NSTypes.String, (NSTypes.String,))
                 other, = args.args
-                return TRUE if args.bound.data<other.data else FALSE
+                return TRUE() if args.bound.data<other.data else FALSE()
             
         @NSValue.make_trait(NSTraits.Op.Gt)
         class __trait__Gt:
             def gt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
                 _check_args(args, NSTypes.String, (NSTypes.String,))
                 other, = args.args
-                return TRUE if args.bound.data>other.data else FALSE
+                return TRUE() if args.bound.data>other.data else FALSE()
             
         @NSValue.make_trait(NSTraits.Op.Eq)
         class __trait__Eq:
             def eq(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
                 _check_args(args, NSTypes.String, (NSTypes.String,))
                 other, = args.args
-                return TRUE if args.bound.data==other.data else FALSE
+                return TRUE() if args.bound.data==other.data else FALSE()
 
         @NSValue.make_trait(NSTraits.Op.Dec)
         class __trait__Dec:
@@ -524,14 +526,14 @@ class NSTypes:
             def lt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
                 _check_args(args, NSTypes.Number, (NSTypes.Number,))
                 other, = args.args
-                return TRUE if args.bound.data<other.data else FALSE
+                return TRUE() if args.bound.data<other.data else FALSE()
             
         @NSValue.make_trait(NSTraits.Op.Gt)
         class __trait__Gt:
             def gt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
                 _check_args(args, NSTypes.Number, (NSTypes.Number,))
                 other, = args.args
-                return TRUE if args.bound.data>other.data else FALSE
+                return TRUE() if args.bound.data>other.data else FALSE()
             
         @NSValue.make_trait(NSTraits.Op.Add)
         class __trait__Add:
@@ -587,12 +589,12 @@ class NSTypes:
         
         def push( ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments' ) -> NSValue:
             _check_args(args, NSTypes.Array)
-            args.bound.data['items'].append(args.args[0] if len(args.args) >= 1 else NULL)
-            return NULL
+            args.bound.data['items'].append(args.args[0] if len(args.args) >= 1 else NULL())
+            return NULL()
         
         def pop( ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments' ) -> NSValue:
             _check_args(args, NSTypes.Array, ())
-            return args.bound.data['items'].pop() if len(args.bound.data['items']) else NULL
+            return args.bound.data['items'].pop() if len(args.bound.data['items']) else NULL()
         
         @NSValue.make_trait(NSTraits.Op.Add)
         class __trait__Add:
@@ -622,7 +624,7 @@ class NSTypes:
                     raise FunctionException('Invalid argument #%d'%(i+1,))
                 args.bound.data['children'].append(arg)
                 arg.data['parents'].append(args.bound)
-            return NULL
+            return NULL()
             
         @NSValue.make_trait(NSTraits.Op.Gt)
         class __trait__Gt:
@@ -631,13 +633,13 @@ class NSTypes:
                 other, = args.args
                 args.bound.data['children'].append(other)
                 other.data['parents'].append(args.bound)
-                return NULL
+                return NULL()
 
 NSValue._latetype()
 
-NULL = NSValue(None,NSKind.Null,None)
-TRUE = NSValue({'__boolean':True},NSTypes.Boolean,None)
-FALSE = NSValue({'__boolean':False},NSTypes.Boolean,None)
+NULL = lambda: NSValue(None,NSKind.Null,None)
+TRUE = lambda: NSValue(True,NSTypes.Boolean,None)
+FALSE = lambda: NSValue(False,NSTypes.Boolean,None)
 
 class NSEVars:
     
@@ -713,7 +715,7 @@ class NSEExecutors:
     
     @_executor(ns.NodeBlock)
     def Block( node: ns.NodeBlock, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
-        v = NULL
+        v = NULL()
         for node in node.children:
             v = ctx.exec(node,frame)
         return v
@@ -731,7 +733,7 @@ class NSEExecutors:
     
     @_executor(ns.NodeLet)
     def Let( node: ns.NodeLet, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
-        value = ctx.exec(node.expr,frame) if node.expr != None else NULL
+        value = ctx.exec(node.expr,frame) if node.expr != None else NULL()
         frame.vars.new(node.name,value)
         return value
                 
@@ -844,7 +846,7 @@ class NSEExecutors:
                         raise NSEException.fromNode(error.message or '',node)
                 raise NSEException.fromToken('Unsupported operation \'%s\' between `%s` and `%s`'%(op,toNSString(ctx,frame,left.type),toNSString(ctx,frame,right.type)),node.op)
             
-            return NULL
+            return NULL()
         
     @_executor(ns.NodeOperatorPostfix)
     def OperatorPostfix( node: ns.NodeOperatorPostfix, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
@@ -923,7 +925,7 @@ class NSEExecutors:
         elif value.type == NSTypes.Number:
             res = value.data != 0
         elif value.type == NSTypes.Boolean:
-            res = value.data['__boolean']
+            res = value.data
         
         node = node.expression if res else \
                node.otherwise
@@ -953,7 +955,7 @@ class NSEExecutors:
 
     @_executor(ns.NodeReturn)
     def Return( node: ns.NodeReturn, frame: NSEFrame, ctx: 'NSEContext' ):
-        raise RewindReturn(ctx.exec(node.value,frame) if node.value else NULL)
+        raise RewindReturn(ctx.exec(node.value,frame) if node.value else NULL())
                 
     @_executor(ns.NodeFor)
     def For( node: ns.NodeFor, frame: NSEFrame, ctx: 'NSEContext' ):
@@ -998,6 +1000,8 @@ class NSEContext:
         v = e(node,frame,self)
         if not attept_copy:
             return v
+        if v.type == NSKind.Null:
+            return NULL()
         copy = v.get_trait_method(NSTraits.Copy, 'copy')
         return copy.call(self, frame, NSFunction.Arguments([],{},copy,v)) if copy else v
     
@@ -1005,7 +1009,7 @@ def toNSString(ctx: NSEContext, frame: NSEFrame, v:NSValue, h:bool=True, rep:boo
     if v.type == NSKind.Null:
         return 'null'
     elif v.type == NSKind.Ref:
-        return toNSString(ctx,frame,v.data,rep=True)+'*'
+        return '&'+toNSString(ctx,frame,v.data,rep=True)
     elif v.type == NSKind.Class:
         cls = v.data.get('__class',{}).get('class',None)
         return '<class %s>'%(cls.__name__) if cls else repr(v)
@@ -1016,7 +1020,7 @@ def toNSString(ctx: NSEContext, frame: NSEFrame, v:NSValue, h:bool=True, rep:boo
     elif v.type == NSTypes.Number:
         return str(int(v.data)) if int(v.data) == v.data else str(v.data)
     elif v.type == NSTypes.Boolean:
-        return ('false','true')[v.data['__boolean']]
+        return ('false','true')[v.data]
     elif v.type == NSTypes.Array:
         return '['+', '.join(toNSString(ctx,frame,v,rep=True) for v in v.data['items'])+']'
     elif h:
@@ -1036,7 +1040,7 @@ def ns_print(ctx: NSEContext, frame: NSEFrame, args: NSFunction.Arguments) -> NS
         if i < len(args.args)-1:
             s += ' '
     print(s)
-    return NULL
+    return NULL()
     
 @NSValue.Function
 def ns_and(ctx: NSEContext, frame: NSEFrame, args: NSFunction.Arguments) -> NSValue:
@@ -1045,9 +1049,9 @@ def ns_and(ctx: NSEContext, frame: NSEFrame, args: NSFunction.Arguments) -> NSVa
 globals = NSEVars({
     'print': ns_print,
     'and': ns_and,
-    'true': TRUE,
-    'false': FALSE,
-    'null': NULL,
+    'true': TRUE(),
+    'false': FALSE(),
+    'null': NULL(),
 },True)
 
 root_frame = NSEFrame(globals.extend(),None)
