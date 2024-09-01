@@ -927,6 +927,8 @@ class NSEExecutors:
             res = value.data != 0
         elif value.type == NSTypes.Boolean:
             res = value.data
+        else:
+            res = True
         
         node = node.expression if res else \
                node.otherwise
@@ -976,6 +978,35 @@ class NSEExecutors:
             if node.name_i != None:
                 v[node.name_i.t] = NSValue.Number(i)
             ctx.exec(node.body,frame(v))
+            
+    @_executor(ns.NodeWhile)
+    def While( node: ns.NodeWhile, frame: NSEFrame, ctx: 'NSEContext' ):
+        v = NULL()
+        
+        while True:
+            value = ctx.exec(node.condition, frame)
+            
+            # TODO: Add truthiness trait?
+            if value.type == NSKind.Null:
+                res = False
+            elif value.type == NSKind.Ref:
+                res = value.data.type != NSKind.Null
+            elif value.type == NSTypes.String:
+                res = len(value.data) > 0
+            elif value.type == NSTypes.Number:
+                res = value.data != 0
+            elif value.type == NSTypes.Boolean:
+                res = value.data
+            else:
+                res = True
+                
+            if not res:
+                break
+            
+            if node.body:
+                v = ctx.exec(node.body, frame)
+            
+        return v
 
     @_executor(ns.NodeRefExpression)
     def RefExpression( node: ns.NodeRefExpression, frame: NSEFrame, ctx: 'NSEContext' ):
