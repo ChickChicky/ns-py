@@ -87,6 +87,26 @@ class RewindReturn(BaseException):
     
     def __init__(self, value: 'NSValue'):
         self.value = value
+        
+class RewindBreak(BaseException):
+    """
+    Raised to break out of a loop
+    """
+    
+    value: 'NSValue'
+    
+    def __init__(self, value: 'NSValue'):
+        self.value = value
+        
+class RewindContinue(BaseException):
+    """
+    Raised to continue a loop
+    """
+    
+    value: 'NSValue'
+    
+    def __init__(self, value: 'NSValue'):
+        self.value = value
 
 class FunctionException(BaseException):
     """
@@ -958,6 +978,14 @@ class NSEExecutors:
     @_executor(ns.NodeReturn)
     def Return( node: ns.NodeReturn, frame: NSEFrame, ctx: 'NSEContext' ):
         raise RewindReturn(ctx.exec(node.value,frame) if node.value else NULL())
+    
+    @_executor(ns.NodeBreak)
+    def Break( node: ns.NodeBreak, frame: NSEFrame, ctx: 'NSEContext' ):
+        raise RewindBreak(ctx.exec(node.value,frame) if node.value else NULL())
+    
+    @_executor(ns.NodeContinue)
+    def Continue( node: ns.NodeContinue, frame: NSEFrame, ctx: 'NSEContext' ):
+        raise RewindContinue(ctx.exec(node.value,frame) if node.value else NULL())
                 
     @_executor(ns.NodeFor)
     def For( node: ns.NodeFor, frame: NSEFrame, ctx: 'NSEContext' ):
@@ -970,13 +998,20 @@ class NSEExecutors:
             if not itemsFn:
                 raise NSEException.fromNode('Value is not iterable',node.iterable)
             items = itemsFn.call(ctx,frame,NSFunction.Arguments([],{},itemsFn,iterable))
+        out = NULL()
         for i, item in enumerate(items.data['items']):
             v = {
                 node.name_it.t: item
             }
             if node.name_i != None:
                 v[node.name_i.t] = NSValue.Number(i)
-            ctx.exec(node.body,frame(v))
+            try:
+                out = ctx.exec(node.body,frame(v))
+            except RewindBreak as brk:
+                return brk.value
+            except RewindContinue as cnt:
+                out = cnt.value
+        return out
             
     @_executor(ns.NodeWhile)
     def While( node: ns.NodeWhile, frame: NSEFrame, ctx: 'NSEContext' ):
@@ -1003,7 +1038,12 @@ class NSEExecutors:
                 break
             
             if node.body:
-                v = ctx.exec(node.body, frame)
+                try:
+                    v = ctx.exec(node.body, frame)
+                except RewindBreak as brk:
+                    return brk.value
+                except RewindContinue as cnt:
+                    v = cnt.value
             
         return v
 
@@ -1095,6 +1135,12 @@ except RewindReturn as ret:
         if ret.value.type == NSTypes.Number:
             exit(int(ret.value.data))
     exit(0)
+except RewindBreak:
+    print('Illegal break statement')
+    exit(1)
+except RewindContinue:
+    print('Illegal continue statement')
+    exit(1)
 except NSEException as e:
     print(e)
     exit(1)

@@ -1125,6 +1125,50 @@ class NodeReturn( Node ):
             ctx.ptr -= 1
         else:
             return ParseError.fromToken('Expected an expression or `;`', token)
+        
+class NodeBreak( Node ):
+    value : Union[NodeExpression,None]
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node ):
+        super().__init__(tokens,i,parent)
+        self.value = None
+        self.tmp = False
+    
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if type(token.t) == TokenEOF:
+            return ParseError.fromToken('Unexpected EOF', token)
+        if token.t == ';':
+            token.tag(self,'close')
+            ctx.node = self.parent
+        elif not self.tmp:
+            self.tmp = True
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,';',True)
+            self.value = ctx.node
+            ctx.ptr -= 1
+        else:
+            return ParseError.fromToken('Expected an expression or `;`', token)
+        
+class NodeContinue( Node ):
+    value : Union[NodeExpression,None]
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node ):
+        super().__init__(tokens,i,parent)
+        self.value = None
+        self.tmp = False
+    
+    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if type(token.t) == TokenEOF:
+            return ParseError.fromToken('Unexpected EOF', token)
+        if token.t == ';':
+            token.tag(self,'close')
+            ctx.node = self.parent
+        elif not self.tmp:
+            self.tmp = True
+            ctx.node = NodeExpression(self.tokens,ctx.ptr,self,';',True)
+            self.value = ctx.node
+            ctx.ptr -= 1
+        else:
+            return ParseError.fromToken('Expected an expression or `;`', token)
 
 class NodeFunction( Node ):
     name         : Union[str,None]
@@ -1245,10 +1289,11 @@ class NodeIf( Node ):
             elif self.expression == False:
                 if token.t == '{':
                     ctx.node = NodeBlock(self.tokens,self.i,self,handleParent=False)
-                    token.tag(ctx.node)
+                    token.tag(ctx.node,'open')
                     ctx.enclose.append(Enclosure(token,'}'))
                 else:
-                    ctx.node = NodeExpression(self.tokens,self.i,self,';',handleParent=False,allowEmpty=True)
+                    # ctx.node = NodeExpression(self.tokens,self.i,self,';',handleParent=False,allowEmpty=True)
+                    ctx.node = NodeBlock(self.tokens,ctx.ptr,self,False,True)
                     ctx.ptr -= 1
                 self.expression = ctx.node
             elif self.otherwise == None:
@@ -1267,7 +1312,8 @@ class NodeIf( Node ):
                     token.tag(ctx.node)
                     self.otherwise = ctx.node
                 else:
-                    ctx.node = NodeExpression(self.tokens,self.i,self,';',handleParent=False,allowEmpty=True)
+                    # ctx.node = NodeExpression(self.tokens,self.i,self,';',handleParent=False,allowEmpty=True)
+                    ctx.node = NodeBlock(self.tokens,ctx.ptr,self,False,True)
                     ctx.ptr -= 1
                 self.otherwise = ctx.node
             else:
@@ -1291,6 +1337,7 @@ class NodeIf( Node ):
                 if token.t == 'else':
                     token.tag(self)
                     ctx.node = NodeExpression(self.tokens,self.i,self,self.closeTokens,handleParent=True,allowEmpty=False)
+                    token.tag(ctx.node,'open')
                     self.otherwise = ctx.node
                 else:
                     return ParseError.fromToken('Expected `else`', token)
@@ -1536,6 +1583,14 @@ class NodeBlock( Node ):
             self.children.append(ctx.node)
         elif token.t == 'return':
             ctx.node = NodeReturn(self.tokens,ctx.ptr,self)
+            token.tag(ctx.node)
+            self.children.append(ctx.node)
+        elif token.t == 'break':
+            ctx.node = NodeBreak(self.tokens,ctx.ptr,self)
+            token.tag(ctx.node)
+            self.children.append(ctx.node)
+        elif token.t == 'continue':
+            ctx.node = NodeContinue(self.tokens,ctx.ptr,self)
             token.tag(ctx.node)
             self.children.append(ctx.node)
         elif token.t == 'while':
