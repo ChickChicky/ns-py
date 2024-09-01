@@ -69,7 +69,34 @@ print(
 let a = and();
 
 // Creates a logic gate and connects it to the previous one
-let b = and() => &{
+let b = and() -> {
     :connect(a);
 };
 ```
+
+```js
+// The language also allows to reference / dereference values
+let x = 1;
+
+let y = &x;
+*y = 2;
+
+print(x);
+```
+> 2
+
+```js
+// A "fun" way to use references
+let a = [];
+
+a:push(42);
+print(a);
+
+*&[]::push = fn (value) {
+    print("Array:push got replaced!");
+};
+
+a:push(12);
+print(a);
+```
+> \[42\]<br>Array:push got replaced!<br>\[42\]
