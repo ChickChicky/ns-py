@@ -920,7 +920,7 @@ class NSEExecutors:
         if value.type == NSKind.Null:
             res = False
         elif value.type == NSKind.Ref:
-            return value.data.type != NSKind.Null
+            res = value.data.type != NSKind.Null
         elif value.type == NSTypes.String:
             res = len(value.data) > 0
         elif value.type == NSTypes.Number:
