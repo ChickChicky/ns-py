@@ -449,6 +449,7 @@ def assign(node: ns.Node, value: NSValue, frame: 'NSEFrame', ctx: 'NSEContext'):
         return
     elif isinstance(node, ns.NodeExpression):
         assign(node.expression, value, frame, ctx)
+        return
     raise NSEException.fromNode('Assignment to \'%s\' is not currently supported'%(type(node).__name__,),node)
 
 class NSTypes:
