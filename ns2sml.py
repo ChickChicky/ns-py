@@ -933,8 +933,7 @@ class NSEExecutors:
         node = node.expression if res else \
                node.otherwise
         
-        if node:
-            ctx.exec(node,frame)
+        return ctx.exec(node,frame) if node else NULL()
 
     @_executor(ns.NodeString)
     def String( node: ns.NodeString, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
