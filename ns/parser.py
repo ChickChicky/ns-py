@@ -1370,7 +1370,7 @@ class NodeWhile( Node ):
                 return ParseError.fromToken('Expected `(` before condition', token)
         elif self.body == None:
             if token.t == '{':
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=False)
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self)
                 token.tag(ctx.node)
                 self.body = ctx.node
                 ctx.enclose.append(Enclosure(token,'}'))
@@ -1380,6 +1380,7 @@ class NodeWhile( Node ):
                 ctx.ptr -= 1
         else:
             ctx.node = self.parent
+            ctx.ptr -= 1
             
 class NodeFor( Node ):
     """
