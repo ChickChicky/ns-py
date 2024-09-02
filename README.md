@@ -15,9 +15,7 @@ print("Hello, world!");
 ```js
 // Variables are declared with `let`
 let x = 1;
-```
 
-```js
 if (x == 1) {
     print("Wow!");
 }
@@ -48,6 +46,27 @@ print(hello());
 > Hello, world!
 
 ```js
+let a = [];
+a:push(42); // Methods are called with a ':'
+
+// For now there only is a for ... in ... scheme
+// the `i` is optionnal
+for i, item in a {
+    print(i,item);
+}
+```
+
+```js
+let i = 0;
+
+while (i < 10) {
+    print(i);
+    i++;
+}
+```
+
+```js
+let x = 1;
 print(
     x 
         => y (y +2) // Allows to reference a value inside an expression
@@ -57,6 +76,7 @@ print(
 > 12
 
 ```js
+let x = 1;
 print(
     x
         => &y (y +1) // Adding an `&` allows to run the expression while returning the base value
