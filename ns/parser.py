@@ -418,6 +418,19 @@ class Node:
         """
         return ParseError.fromToken('Something went very wrong right before here :/ Can\'t tell much more', token)
 
+class DecoratableNode( Node ):
+    decorators : list['NodeDecorator']
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node ):
+        super().__init__(tokens,i,parent)
+        self.__decorators = []
+        
+    def add_decorators( self, *decorators: list['NodeDecorator'] ):
+        self.__decorators.extend(decorators)
+        
+    def get_decorators( self ) -> list['NodeDecorator']:
+        return self.__decorators
+
 class NodeName( Node ):
     """
     Reference to a variable
@@ -810,7 +823,53 @@ class NodeExpression ( Node ):
             return ParseError.fromToken('Unexpected EOF', token)
         else:
             return ParseError.fromToken('Unexpected token', token)
+
+class NodeDecorator( Node ):
+    
+    name : str
+    args : list[NodeExpression]
+    
+    def __init__(self, tokens:Tokens, i:int, parent:Node):
+        super().__init__(tokens,i,parent)
+        self.name = None
+        self.args = []
+        self.arg = None
+        self.inargs = False
         
+    def feed(self, token:Token, ctx:ParseContext) -> ParseError | None:
+        if self.name == None:
+            if not token.isidentifier():
+                raise ParseError.fromToken('Expected decorator name to be an identifier', token)
+            self.name = token.t
+            token.tag(self,'name')
+        elif self.inargs == 0:
+            if token.t == '(':
+                token.tag(self)
+                self.inargs = 1
+                ctx.open(token,')')
+            else:
+                ctx.node = self.parent
+                if token.t != ';':
+                    ctx.ptr -= 1
+        elif self.inargs == 1:
+            if token.t in (',',')'):
+                if self.arg != None:
+                    self.args.append(self.arg)
+                    self.arg = None
+                if token.t == ')':
+                    self.inargs = 2
+                    ctx.close(token)
+            else:
+                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,[',',')'],True,False)
+                ctx.ptr -= 1
+                self.arg = ctx.node
+        elif self.inargs == 2:
+            if token.t != ';':
+                ctx.ptr -= 1
+            ctx.node = self.parent
+        else:
+            raise Exception('That sould not have happened')      
+  
 class NodeRefExpression( Node ):
     """
     `... => (...)` reference operator
@@ -1164,7 +1223,7 @@ class NodeContinue( Node ):
         else:
             return ParseError.fromToken('Expected an expression or `;`', token)
 
-class NodeFunction( Node ):
+class NodeFunction( DecoratableNode ):
     name         : Union[str,None]
     body         : Union['NodeBlock',None]
     modifiers    : set[str]
@@ -1542,6 +1601,15 @@ class NodeBlock( Node ):
         self.singleElement = singleElement
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
+        if len(self.children) > 0 and any(isinstance(node,NodeDecorator) for node in self.children) and not isinstance(self.children[-1],NodeDecorator):
+            node = self.children.pop()
+            i = 0
+            while not isinstance(self.children[i],NodeDecorator):
+                i += 1
+            decs = [self.children.pop(i) for _ in range(len(self.children)-i)]
+            if isinstance(node,DecoratableNode):
+                node.add_decorators(*decs)
+            self.children.append(node)
         if len(self.children) >= 1 and self.singleElement:
             ctx.node = self.parent
             ctx.ptr -= 1
@@ -1559,6 +1627,10 @@ class NodeBlock( Node ):
             ctx.node = self.parent
             if self.handleParent:
                 ctx.ptr -= 1
+        elif token.t == '@':
+            ctx.node = NodeDecorator(self.tokens,ctx.ptr,self)
+            token.tag(ctx.node)
+            self.children.append(ctx.node)
         elif token.t == 'let':
             ctx.node = NodeLet(self.tokens,ctx.ptr,self)
             token.tag(ctx.node)

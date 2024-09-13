@@ -8,8 +8,11 @@ args = sys.argv[1:]
 if len(args) == 0:
     print('Missing source file')
     exit(1)
+    
+frames = {}
 
-source = ns.Source.fromFile(args[0])
+sourcePath = pathlib.Path(args[0]).resolve()
+source = ns.Source.fromFile(sourcePath)
 
 tokens = ns.tokenize( source )
 tree   = ns.parse( tokens )
@@ -403,6 +406,12 @@ class NSValue:
     @staticmethod
     def Array( items: list['NSValue'] ) -> 'NSValue':
         return NSValue._latevalue({'items':items},'NSTypes.Array')
+    
+    @staticmethod
+    def BasicDecorator( dec: Callable[['NSValue',list['NSValue'],ns.DecoratableNode],Any] ) -> 'NSValue':
+        # def apply( value: NSValue, args: list[NSValue], node: ns.DecoratableNode, dec: ns.NodeDecorator  ):
+        #     dec(value,args,node)
+        return NSValue._latevalue({'post':dec},'NSTypes.Decorator')
 
 class NSTraits:
     
@@ -451,6 +460,21 @@ def _check_args(args: 'NSFunction.Arguments', bound: NSValue = None, arguments: 
         _check_bound_to(args, bound)
     if arguments != None: 
         _check_called_with(args, arguments)
+        
+class util:
+    
+    @staticmethod
+    def assign_ref(target: NSValue, value: NSValue):
+        target.data = value.data
+        target.props = value.props
+        target.type = value.type
+        
+    @staticmethod
+    def copy(ctx: 'NSEContext', frame: 'NSEFrame', value: NSValue):
+        if value.type == NSKind.Null:
+            return NULL()
+        copy = value.get_trait_method(NSTraits.Copy, 'copy')
+        return copy.call(ctx, frame, NSFunction.Arguments([],{},copy,value)) if copy else value
 
 def assign(node: ns.Node, value: NSValue, frame: 'NSEFrame', ctx: 'NSEContext'):
     if isinstance(node, ns.NodeName):
@@ -463,9 +487,7 @@ def assign(node: ns.Node, value: NSValue, frame: 'NSEFrame', ctx: 'NSEContext'):
         target = ctx.exec(node.value, frame, False)
         if target.type != NSKind.Ref:
             raise NSEException.fromToken('Can\'t dereference `%s`'%(toNSString(ctx,frame,value.type),),node.op)
-        target.data.data = value.data
-        target.data.props = value.props
-        target.data.type = value.type
+        util.assign_ref(target.data,value)
         return
     elif isinstance(node, ns.NodeExpression):
         assign(node.expression, value, frame, ctx)
@@ -655,6 +677,10 @@ class NSTypes:
                 args.bound.data['children'].append(other)
                 other.data['parents'].append(args.bound)
                 return NULL()
+            
+    @NSValue.make_class
+    class Decorator:
+        pass
 
 NSValue._latetype()
 
@@ -764,7 +790,7 @@ class NSEExecutors:
         kwargs = {} # TODO: Implement keyword arguments (could probably also do something about them in the parser)
         args = [ctx.exec(arg,frame) for arg in node.args]
         
-        f = value.data['__function'].get('func',None)
+        f = value.data['__function'].get('func',None) if isinstance(value.data,dict) else None
         if not f or not isinstance(f,NSFunction):
             raise NSEException.fromNode('%s is not callable'%('null' if value.type==NSKind.Null else 'Value',),node)
         
@@ -1058,9 +1084,55 @@ class NSEExecutors:
                     
 NSEExecutors.executors = _executors
 del _executors
-        
+
+def apply_decorators_pre(ctx: 'NSEContext', frame: NSEFrame, node: ns.DecoratableNode, env: dict[str,Any]):
+    for dec in node.get_decorators():
+        found, decorator = frame.vars.get(dec.name)
+        if not found:
+            raise NSEException.fromNode('No such variable exists in this scope',dec)
+        for arg in dec.args:
+            args.append(ctx.exec(arg.expression,frame))
+        if decorator.type == NSTypes.Function:
+            pass
+        elif decorator.type == NSTypes.Decorator:
+            if 'pre' in decorator.data:
+                f = decorator.data['pre']
+                f(args,node,dec)
+        else:
+            raise NSEException.fromNode('Value is not a decorator',node)        
+
+def apply_decorators_post(ctx: 'NSEContext', frame: NSEFrame, node: ns.DecoratableNode, env: dict[str,Any], value: NSValue):
+    for dec in node.get_decorators():
+        found, decorator = frame.vars.get(dec.name)
+        if not found:
+            raise NSEException.fromNode('No such variable exists in this scope',dec)
+        args = []
+        for arg in dec.args:
+            args.append(ctx.exec(arg.expression,frame))
+        if decorator.type == NSTypes.Function:
+            f = decorator.data['__function'].get('func',None)
+            # if not f or not isinstance(f,NSFunction):
+            #     raise NSEException.fromNode('Value is not callable',node)
+            v = util.copy(ctx, frame, value)
+            # TODO: Make functions copiable
+            r = f.call(ctx,frame,NSFunction.Arguments([v,NSValue.Array(args)],{},decorator,decorator.data['__function'].get('bound',None)))     
+            util.assign_ref(value,r)
+        elif decorator.type == NSTypes.Decorator:
+            if 'post' in decorator.data:
+                f = decorator.data['post']
+                f(value,args,node,dec)
+        else:
+            raise NSEException.fromNode('Value is not a decorator',node)
+
 class NSEContext:    
-    def exec(self, node: ns.Node, frame: NSEFrame, attept_copy: bool = True) -> NSValue:
+    
+    root_frame : NSEFrame
+    # TODO: Add trace
+        
+    def __init__(self, root_frame: NSEFrame):
+        self.root_frame = root_frame
+    
+    def exec(self, node: ns.Node, frame: NSEFrame, attempt_copy: bool = True) -> NSValue:
         e = NSEExecutors.executors.get(type(node))
         if not e:
             raise ValueError('Unsupported node type `%s`'%(type(node).__name__,))
@@ -1068,13 +1140,18 @@ class NSEContext:
             raise ValueError('Legacy node executor for `%s`'%(type(node).__name__))
         if e == NSEExecutors.Block:
             frame = frame()
-        v = e(node,frame,self)
-        if not attept_copy:
-            return v
-        if v.type == NSKind.Null:
-            return NULL()
-        copy = v.get_trait_method(NSTraits.Copy, 'copy')
-        return copy.call(self, frame, NSFunction.Arguments([],{},copy,v)) if copy else v
+        env = {
+            'result': None,
+            'copy': None,
+        }
+        if isinstance(node,ns.DecoratableNode):
+            apply_decorators_pre(self, frame, node, env)
+        env['result'] = e(node,frame,self)
+        if isinstance(node,ns.DecoratableNode):
+            apply_decorators_post(self, frame, node, env, env['result'])
+        if not attempt_copy if env['copy'] == None else env['copy']:
+            return env['result']
+        return util.copy(self, frame, env['result'])
     
 def toNSString(ctx: NSEContext, frame: NSEFrame, v:NSValue, h:bool=True, rep:bool=False) -> str:
     if v.type == NSKind.Null:
@@ -1122,25 +1199,38 @@ globals = NSEVars({
     'and': ns_and,
     'true': TRUE(),
     'false': FALSE(),
-    'null': NULL(),
+    'null': NULL()
 },True)
 
-root_frame = NSEFrame(globals.extend(),None)
+class ExecutionResult:
+    
+    frame : NSEFrame
+    
+    def __init__(self, frame: NSEFrame):
+        self.frame = frame
 
-context = NSEContext()
-try:
-    context.exec(tree,root_frame)
-except RewindReturn as ret:
-    if ret.value:
-        if ret.value.type == NSTypes.Number:
-            exit(int(ret.value.data))
-    exit(0)
-except RewindBreak:
-    print('Illegal break statement')
-    exit(1)
-except RewindContinue:
-    print('Illegal continue statement')
-    exit(1)
-except NSEException as e:
-    print(e)
-    exit(1)
+def exec_code( root: ns.NodeBlock ):
+
+    root_frame = NSEFrame(globals.extend(),None)
+
+    context = NSEContext(root_frame)
+    try:
+        context.exec(root,root_frame)
+    except RewindReturn as ret:
+        if ret.value:
+            if ret.value.type == NSTypes.Number:
+                exit(int(ret.value.data))
+        exit(0)
+    except RewindBreak:
+        print('Illegal break statement')
+        exit(1)
+    except RewindContinue:
+        print('Illegal continue statement')
+        exit(1)
+    except NSEException as e:
+        print(e)
+        exit(1)
+
+    return ExecutionResult(root_frame)
+
+exec_code(tree)
