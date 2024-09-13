@@ -347,8 +347,17 @@ class ParseContext:
         self.node = node
         self.ptr = ptr
         self.enclose = []
+        
+    def open( self, start:Token, end:str ):
+        self.enclose.append(Enclosure(start,end))
+        
+    def close( self, token:Token ) -> bool:
+        if len(self.enclose) and self.enclose[-1].end == token.t:
+            self.enclose.pop()
+        else:
+            raise ParseError.fromToken('Missmatched `%s`'%(token.t,), token)
 
-class ParseError:
+class ParseError(BaseException):
     """
     Holds data about a parser (syntax) error
     """
@@ -504,10 +513,7 @@ class NodeIndex( Node ):
             token.tag(self,'close')
             if self.idx:
                 self.index.append(self.idx)
-            if len(ctx.enclose) and ctx.enclose[-1].end == token.t:
-                ctx.enclose.pop()
-            else:
-                return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
+            ctx.close(token)
             ctx.node = self.parent
         elif token.t in (',',':'):
             token.tag(self)
@@ -542,10 +548,7 @@ class NodeCall( Node ):
             if self.arg:
                 self.args.append(self.arg)
             # Ensures that no bracket was opened in the arguments and left unclosed
-            if len(ctx.enclose) and ctx.enclose[-1].end == token.t:
-                ctx.enclose.pop()
-            else:
-                return ParseError.fromToken('Missmatched `)`', token)
+            ctx.close(token)
             ctx.node = self.parent
         # Adds the previous argument to the argument list, allowing empty arguments
         elif token.t == ',':
@@ -647,10 +650,7 @@ class NodeExpression ( Node ):
                 return ParseError.fromToken('Unexpected empty expression', token)
             # Checks for surrounding brackets
             if self.finishEnclose:
-                if len(ctx.enclose) and ctx.enclose[-1].end == self.finishEnclose:
-                    ctx.enclose.pop()
-                else:
-                    return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
+                ctx.close(token)
             # 'Resolves' operators
             for prec in operators:
                 ops = list(prec.keys())
@@ -733,13 +733,13 @@ class NodeExpression ( Node ):
                 ctx.node = NodeCall(self.tokens,ctx.ptr,self,value)
                 token.tag(ctx.node)
                 self.buffer.append(ctx.node)
-                ctx.enclose.append(Enclosure(token,')'))
+                ctx.open(token,')')
             # New expression
             else:
                 ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')',allowEmpty=True,finishEnclose=')')
                 token.tag(ctx.node)
                 self.buffer.append(ctx.node)
-                ctx.enclose.append(Enclosure(token,')'))
+                ctx.open(token,')')
         elif token.t == '[':
             # Indexing operator
             # TODO: Move the common parts out of the if?
@@ -748,12 +748,12 @@ class NodeExpression ( Node ):
                 ctx.node = NodeIndex(self.tokens,ctx.ptr,self,value)
                 token.tag(ctx.node)
                 self.buffer.append(ctx.node)
-                ctx.enclose.append(Enclosure(token,']'))
+                ctx.open(token,']')
             else:
                 ctx.node = NodeArray(self.tokens,ctx.ptr,self)
                 token.tag(ctx.node)
                 self.buffer.append(ctx.node)
-                ctx.enclose.append(Enclosure(token,']'))
+                ctx.open(token,']')
         elif token.t == '{':
             if len(self.buffer) and isinstance(self.buffer[-1],NodeName):
                 struct = self.buffer.pop()
@@ -763,10 +763,10 @@ class NodeExpression ( Node ):
             else:
                 ctx.node = NodeBlock(self.tokens,ctx.ptr,self)
                 self.buffer.append(ctx.node)
-                ctx.enclose.append(Enclosure(token,'}'))
+                ctx.open(token,'}')
         elif token.t == '<{':
             return ParseError.fromToken('Objects are not supported yet', token)
-            ctx.enclose.append(Enclosure(token,'}>'))
+            ctx.open(token,'}>')
         elif token.t == 'fn':
             ctx.node = NodeFunction(self.tokens,ctx.ptr,self)
             token.tag(ctx.node)
@@ -841,12 +841,12 @@ class NodeRefExpression( Node ):
             ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')',True,False,')')
             token.tag(ctx.node,'open')
             self.expression = ctx.node
-            ctx.enclose.append(Enclosure(token,')'))
+            ctx.open(token,')')
         elif token.t == '{':
             ctx.node = NodeBlock(self.tokens,ctx.ptr,self,True)
             token.tag(ctx.node)
             self.expression = ctx.node
-            ctx.enclose.append(Enclosure(token,'}'))
+            ctx.open(token,'}')
         elif token.isidentifier() and self.name == None:
             self.tag(token,'name')
             self.name = token
@@ -878,10 +878,7 @@ class NodeTypeGeneric( Node ):
             token.tag(self)
             if self.idx:
                 self.args.append(self.idx)
-            if len(ctx.enclose) and ctx.enclose[-1].end == token.t:
-                ctx.enclose.pop()
-            else:
-                return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
+            ctx.close(token)
             ctx.node = self.parent
         elif token.t == ',':
             token.tag(self)
@@ -926,10 +923,7 @@ class NodeTypeHint( Node ):
                 return ParseError.fromToken('Unexpected empty type hint', token)
             # Checks for surrounding brackets
             if self.finishEnclose:
-                if len(ctx.enclose) and ctx.enclose[-1].end == self.finishEnclose:
-                    ctx.enclose.pop()
-                else:
-                    return ParseError.fromToken('Missmatched `%s`'%(self.closeToken,), token)
+                ctx.close(token)
             # 'Resolves' operators
             for prec in operators:
                 ops = list(prec.keys())
@@ -1000,7 +994,7 @@ class NodeTypeHint( Node ):
         elif token.t == '(':
             ctx.node = NodeTypeHint(self.tokens,ctx.ptr,self,')',allowEmpty=True,finishEnclose=')')
             self.buffer.append(ctx.node)
-            ctx.enclose.append(Enclosure(token,')'))
+            ctx.open(token,')')
         elif token.t == '[':
             return ParseError.fromToken('Arrays are not supported yet', token)
         elif token.t == '<':
@@ -1008,7 +1002,7 @@ class NodeTypeHint( Node ):
                 value = self.buffer.pop()
                 ctx.node = NodeTypeGeneric(self.tokens,ctx.ptr,self,value)
                 self.buffer.append(ctx.node)
-                ctx.enclose.append(Enclosure(token,'>'))
+                ctx.open(token,'>')
             else:
                 return ParseError.fromToken('Expected expression before generic arguments', token)
         elif token.isidentifier():
@@ -1239,7 +1233,7 @@ class NodeFunction( Node ):
             if token.t == '{':
                 ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=True)
                 self.body = ctx.node
-                ctx.enclose.append(Enclosure(token,'}'))
+                ctx.open(token,'}')
             elif token.t == '->' and self.type == None:
                 token.tag(self)
                 ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,('{',';'),True)
@@ -1278,7 +1272,7 @@ class NodeIf( Node ):
                     ctx.node = NodeExpression(self.tokens,self.i,self,')',handleParent=True,allowEmpty=False,finishEnclose=')')
                     token.tag(ctx.node)
                     self.condition = ctx.node
-                    ctx.enclose.append(Enclosure(token,')'))
+                    ctx.open(token,')')
                 else:
                     return ParseError.fromToken('Expected `(`', token)
             elif self.expression == None:
@@ -1290,7 +1284,7 @@ class NodeIf( Node ):
                 if token.t == '{':
                     ctx.node = NodeBlock(self.tokens,self.i,self,handleParent=False)
                     token.tag(ctx.node,'open')
-                    ctx.enclose.append(Enclosure(token,'}'))
+                    ctx.open(token,'}')
                 else:
                     # ctx.node = NodeExpression(self.tokens,self.i,self,';',handleParent=False,allowEmpty=True)
                     ctx.node = NodeBlock(self.tokens,ctx.ptr,self,False,True)
@@ -1306,7 +1300,7 @@ class NodeIf( Node ):
             elif self.otherwise == False:
                 if token.t == '{':
                     ctx.node = NodeBlock(self.tokens,self.i,self,handleParent=False)
-                    ctx.enclose.append(Enclosure(token,'}'))
+                    ctx.open(token,'}')
                 elif token.t == 'if':
                     ctx.node = NodeIf(self.tokens,ctx.ptr,self,inBlock=True)
                     token.tag(ctx.node)
@@ -1324,7 +1318,7 @@ class NodeIf( Node ):
                 if token.t == '(':
                     ctx.node = NodeExpression(self.tokens,self.i,self,')',handleParent=True,allowEmpty=False,finishEnclose=')')
                     self.condition = ctx.node
-                    ctx.enclose.append(Enclosure(token,')'))
+                    ctx.open(token,')')
                 else:
                     return ParseError.fromToken('Expected `(`', token)
             elif self.expression == None:
@@ -1365,7 +1359,7 @@ class NodeWhile( Node ):
                 ctx.node = NodeExpression(self.tokens,ctx.ptr,self,(')',),handleParent=False,allowEmpty=False,finishEnclose=')')
                 token.tag(ctx.node)
                 self.condition = ctx.node
-                ctx.enclose.append(Enclosure(token,')'))
+                ctx.open(token,')')
             else:
                 return ParseError.fromToken('Expected `(` before condition', token)
         elif self.body == None:
@@ -1373,7 +1367,7 @@ class NodeWhile( Node ):
                 ctx.node = NodeBlock(self.tokens,ctx.ptr,self)
                 token.tag(ctx.node)
                 self.body = ctx.node
-                ctx.enclose.append(Enclosure(token,'}'))
+                ctx.open(token,'}')
             else:
                 ctx.node = NodeBlock(self.tokens,ctx.ptr,self,singleElement=True)
                 self.body = ctx.node
@@ -1428,7 +1422,7 @@ class NodeFor( Node ):
                 return ParseError.fromToken('Something went horribly wrong', token)
             ctx.node = NodeBlock(self.tokens,ctx.ptr,self,True)
             self.body = ctx.node
-            ctx.enclose.append(Enclosure(token,'}'))
+            ctx.open(token,'}')
             self.n = 3
         elif self.n == 3:
             if token.t != '}':
@@ -1454,7 +1448,7 @@ class NodeConstructor( Node ):
                 ctx.node = NodeBlock(self.tokens,ctx.ptr,self+('constructor',),handleParent=True,singleElement=False)
                 token.tag(ctx.node)
                 self.constructor = ctx.node
-                ctx.enclose.append(Enclosure(token,'}'))
+                ctx.open(token,'}')
             else:
                 return ParseError.fromToken('Expected `{`', token)
         else:
@@ -1485,7 +1479,7 @@ class NodeStruct( Node ):
                 ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=False)
                 token.tag(ctx.node)
                 self.body = ctx.node
-                ctx.enclose.append(Enclosure(token,'}'))
+                ctx.open(token,'}')
             else:
                 return ParseError.fromToken('Expected `{`', token)
         else:
@@ -1527,10 +1521,7 @@ class NodeArray( Node ):
             token.tag(self,'close')
             if self.item:
                 self.items.append(self.item)
-            if len(ctx.enclose) and ctx.enclose[-1].end == token.t:
-                ctx.enclose.pop()
-            else:
-                return ParseError.fromToken('Missmatched `]`', token)
+            ctx.close(token)
             ctx.node = self.parent
         elif token.t == ',':
             token.tag(self)
@@ -1540,7 +1531,7 @@ class NodeArray( Node ):
             ctx.node = NodeExpression(self.tokens,ctx.ptr,self,(',',']'),handleParent=True,allowEmpty=True)
             self.item = ctx.node
             ctx.ptr -= 1
-
+        
 class NodeBlock( Node ):
     children : list['Node']
     
@@ -1560,16 +1551,14 @@ class NodeBlock( Node ):
             ctx.node = NodeBlock(self.tokens,ctx.ptr,self)
             token.tag(ctx.node,'open')
             self.children.append(ctx.node)
-            ctx.enclose.append(Enclosure(token,'}'))
+            ctx.open(token,'}')
         elif token.t == '}':
             token.tag(self,'close')
-            if self.parent and len(ctx.enclose) and ctx.enclose[-1].end == '}':
-                ctx.node = self.parent
-                ctx.enclose.pop()
-                if self.handleParent:
-                    ctx.ptr -= 1
-            else:
-                return ParseError.fromToken('Missmatched `}`', token)
+            if self.parent:
+                ctx.close(token)
+            ctx.node = self.parent
+            if self.handleParent:
+                ctx.ptr -= 1
         elif token.t == 'let':
             ctx.node = NodeLet(self.tokens,ctx.ptr,self)
             token.tag(ctx.node)
@@ -1628,7 +1617,11 @@ def parse( tokens:Tokens ) -> Union[Node,ParseError]:
     ctx = ParseContext( tokens, root, 0 ) # the parsing context
     while ctx.ptr < len(ctx.tokens.tokens):
         # feeds the current node with the current token
-        err = ctx.node.feed( ctx.tokens.tokens[ctx.ptr], ctx )
+        err = None
+        try:
+            err = ctx.node.feed( ctx.tokens.tokens[ctx.ptr], ctx )
+        except ParseError as e:
+            err = e
         # returns an error if the parsing resulted in one
         if isinstance(err,ParseError): 
             node = ctx.node
