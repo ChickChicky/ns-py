@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 from typing import Union, Any, Callable, Type, Optional, TypeVar, Generic, Iterable
 
-import ns, sys
+import ns, sys, pathlib
 
 args = sys.argv[1:]
+
+pathHere = pathlib.Path(__file__).parent
 
 if len(args) == 0:
     print('Missing source file')
@@ -495,9 +497,17 @@ def assign(node: ns.Node, value: NSValue, frame: 'NSEFrame', ctx: 'NSEContext'):
     raise NSEException.fromNode('Assignment to \'%s\' is not currently supported'%(type(node).__name__,),node)
 
 class NSTypes:
+    @NSValue.make_class
+    class Module:
+        pass
 
     @NSValue.make_class
     class Function:
+        class __trait_Copy:
+            def copy(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
+                _check_args(args, NSTypes.Function, ())
+                return NSValue(args.bound.data,args.bound.type)
+        
         def bind(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments') -> NSValue:
             f = args.bound
             if not isinstance(f,NSValue) or f.type != NSTypes.Function:
@@ -1081,6 +1091,23 @@ class NSEExecutors:
             value = NSValue(value, NSKind.Ref)
         out = ctx.exec(node.expression,frame({name:value,'self':value}))
         return out if node.takeResult else value
+    
+    @_executor(ns.NodeImport)
+    def NodeImport( node: ns.NodeImport, frame: NSEFrame, ctx: 'NSEContext' ):
+        for name in node.names:
+            paths = [
+                pathHere.joinpath(name+'.ns').resolve()
+            ]
+            for p in paths:
+                if p.exists():
+                    # TODO: Maybe cache the imports?
+                    source = ns.Source.fromFile(p)
+                    tokens = ns.tokenize(source)
+                    tree = ns.parse(tokens)
+                    result = exec_code(tree)
+                    frame.vars.new(name,NSValue(None,NSTypes.Module,result.frame.vars.vars))
+                    break
+        return NULL()
                     
 NSEExecutors.executors = _executors
 del _executors
@@ -1095,9 +1122,10 @@ def apply_decorators_pre(ctx: 'NSEContext', frame: NSEFrame, node: ns.Decoratabl
         if decorator.type == NSTypes.Function:
             pass
         elif decorator.type == NSTypes.Decorator:
+            # TODO: Add support for NS functions
             if 'pre' in decorator.data:
                 f = decorator.data['pre']
-                f(args,node,dec)
+                f(ctx,frame,args,node,dec)
         else:
             raise NSEException.fromNode('Value is not a decorator',node)        
 
@@ -1114,13 +1142,13 @@ def apply_decorators_post(ctx: 'NSEContext', frame: NSEFrame, node: ns.Decoratab
             # if not f or not isinstance(f,NSFunction):
             #     raise NSEException.fromNode('Value is not callable',node)
             v = util.copy(ctx, frame, value)
-            # TODO: Make functions copiable
             r = f.call(ctx,frame,NSFunction.Arguments([v,NSValue.Array(args)],{},decorator,decorator.data['__function'].get('bound',None)))     
             util.assign_ref(value,r)
         elif decorator.type == NSTypes.Decorator:
+            # TODO: Add support for NS functions
             if 'post' in decorator.data:
                 f = decorator.data['post']
-                f(value,args,node,dec)
+                f(ctx,frame,value,args,node,dec)
         else:
             raise NSEException.fromNode('Value is not a decorator',node)
 
@@ -1194,12 +1222,23 @@ def ns_print(ctx: NSEContext, frame: NSEFrame, args: NSFunction.Arguments) -> NS
 def ns_and(ctx: NSEContext, frame: NSEFrame, args: NSFunction.Arguments) -> NSValue:
     return NSTypes.And.instantiate()
     
+@NSValue.BasicDecorator
+def export(ctx: NSEContext, frame: NSEFrame, value: NSValue, args: list[NSValue], node: ns.DecoratableNode, dec: ns.NodeDecorator):
+    name = None
+    if isinstance(node, ns.NodeFunction):
+        name = node.name
+    elif isinstance(node, ns.NodeLet):
+        name = node.name
+    if name:
+        ctx.root_frame.vars.new(name, value)
+    
 globals = NSEVars({
     'print': ns_print,
     'and': ns_and,
     'true': TRUE(),
     'false': FALSE(),
-    'null': NULL()
+    'null': NULL(),
+    'export': export
 },True)
 
 class ExecutionResult:

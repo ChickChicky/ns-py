@@ -1077,6 +1077,27 @@ class NodeTypeHint( Node ):
         else:
             return ParseError.fromToken('Unexpected token', token)
 
+class NodeImport( Node ):
+    """
+    An import statement
+    """
+    
+    names : list[str]
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node ):
+        super().__init__(tokens,i,parent)
+        self.names = []
+        
+    def feed( self, token:Token, ctx:ParseContext ):
+        if token.isidentifier():
+            self.names.append(token.t)
+        elif token.t == ';':
+            ctx.node = self.parent
+        elif token.t == ',':
+            pass
+        else:
+            raise ParseError.fromToken('Expected import name or `,`',token)
+
 class NodeLet( Node ):
     """
     A variable declaration
@@ -1665,6 +1686,10 @@ class NodeBlock( Node ):
             self.children.append(ctx.node)
         elif token.t == 'struct':
             ctx.node = NodeStruct(self.tokens,ctx.ptr,self)
+            token.tag(ctx.node)
+            self.children.append(ctx.node)
+        elif token.t == 'import':
+            ctx.node = NodeImport(self.tokens,ctx.ptr,self)
             token.tag(ctx.node)
             self.children.append(ctx.node)
         elif type(token.t) == TokenEOF:
