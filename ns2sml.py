@@ -829,7 +829,8 @@ class NSEExecutors:
             found, value = frame.vars.get('self')
             if not found:
                 raise NSEException.fromNode('Self does not exist in this scope',node)
-        val = value.get(node.prop,False,True)
+             
+        val = value.get(node.prop,False,True) if value.type != NSTypes.Module else value.get(node.prop)
         if val.type == NSTypes.Function:
             val = NSValue({'__function':{'func':val.data['__function'].get('func',None),'bound':value}},val.type,val.props)
         return val
@@ -843,7 +844,7 @@ class NSEExecutors:
             found, value = frame.vars.get('self')
             if not found:
                 raise NSEException.fromNode('Self does not exist in this scope',node)
-        val = value.get(node.prop,False,True)
+        val = value.get(node.prop,False,True) if value.type != NSTypes.Module else value.get(node.prop)
         return val
 
                 
