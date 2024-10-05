@@ -503,6 +503,7 @@ class NSTypes:
 
     @NSValue.make_class
     class Function:
+        @NSValue.make_trait(NSTraits.Copy)
         class __trait_Copy:
             def copy(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
                 _check_args(args, NSTypes.Function, ())
