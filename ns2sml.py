@@ -11,13 +11,7 @@ if len(args) == 0:
     print('Missing source file')
     exit(1)
     
-frames = {}
-
-sourcePath = pathlib.Path(args[0]).resolve()
-source = ns.Source.fromFile(sourcePath)
-
-tokens = ns.tokenize( source )
-tree   = ns.parse( tokens )
+frames_cache = {}
 
 def consume_ns_arg(arg:str) -> bool:
     if arg in args and ('--' not in args or args.index(arg) < args.index('--')):
@@ -75,14 +69,6 @@ def explore(tree) -> str:
     else:
         return '\x1b[31m'+repr(tree)+'\x1b[39m'
 
-if isinstance(tree,ns.ParseError):
-    print(tree)
-    exit(1)
-    
-if consume_ns_arg('-ast'):
-    print(explore(tree))
-    exit(0)
-    
 class RewindReturn(BaseException):
     """
     Raised to return from a function
@@ -496,6 +482,8 @@ def assign(node: ns.Node, value: NSValue, frame: 'NSEFrame', ctx: 'NSEContext'):
         return
     raise NSEException.fromNode('Assignment to \'%s\' is not currently supported'%(type(node).__name__,),node)
 
+# TODO: Implement constructor for all of them
+
 class NSTypes:
     @NSValue.make_class
     class Module:
@@ -510,12 +498,9 @@ class NSTypes:
                 return NSValue(args.bound.data,args.bound.type)
         
         def bind(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments') -> NSValue:
+            _check_args(args, NSTypes.Function)
             f = args.bound
-            if not isinstance(f,NSValue) or f.type != NSTypes.Function:
-                raise FunctionException('Unbound method call')
-            if len(args.args) == 0:
-                raise FunctionException('Missing bind target')
-            b = args.args[0]
+            b = args.args[0] if len(args) > 0 else NULL()
             return NSValue({'__function':{'func':f.data['__function'].get('func',None),'bound':b}},f.type,f.props|{'bound':b})
 
     @NSValue.make_class
@@ -666,15 +651,16 @@ class NSTypes:
                 return NSValue.Boolean(args.bound.data)
     
     @NSValue.make_class
-    class And:
-        def __init__( self: NSValue ):
+    class Logic:
+        def __init__( self: NSValue, variant: int ):
             self.data['parents'] = []
             self.data['children'] = []
+            self.data['variant'] = variant
         
         def connect( ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments' ) -> NSValue:
-            _check_bound_to(args, NSTypes.And)
+            _check_bound_to(args, NSTypes.Logic)
             for i, arg in enumerate(args.args):
-                if not isinstance(arg,NSValue) or arg.type != NSTypes.And:
+                if not isinstance(arg,NSValue) or arg.type != NSTypes.Logic:
                     raise FunctionException('Invalid argument #%d'%(i+1,))
                 args.bound.data['children'].append(arg)
                 arg.data['parents'].append(args.bound)
@@ -683,7 +669,7 @@ class NSTypes:
         @NSValue.make_trait(NSTraits.Op.Gt)
         class __trait__Gt:
             def gt(ctx: 'NSEContext', frame: 'NSEFrame', args: 'NSFunction.Arguments'):
-                _check_args(args, NSTypes.And, (NSTypes.And,))
+                _check_args(args, NSTypes.Logic, (NSTypes.Logic,))
                 other, = args.args
                 args.bound.data['children'].append(other)
                 other.data['parents'].append(args.bound)
@@ -692,6 +678,12 @@ class NSTypes:
     @NSValue.make_class
     class Decorator:
         pass
+    
+    @NSValue.make_class
+    class Component:
+        def __init__( self: NSValue ):
+            self.props['inputs'] = NSValue.Array([])
+            self.props['outputs'] = NSValue.Array([])
 
 NSValue._latetype()
 
@@ -801,14 +793,23 @@ class NSEExecutors:
         kwargs = {} # TODO: Implement keyword arguments (could probably also do something about them in the parser)
         args = [ctx.exec(arg,frame) for arg in node.args]
         
-        f = value.data['__function'].get('func',None) if isinstance(value.data,dict) else None
-        if not f or not isinstance(f,NSFunction):
-            raise NSEException.fromNode('%s is not callable'%('null' if value.type==NSKind.Null else 'Value',),node)
+        if value.type == NSTypes.Function:
+            f = value.data['__function'].get('func',None) 
+            if f and isinstance(f,NSFunction):    
+                try:
+                    return f.call(ctx,frame,NSFunction.Arguments(args,kwargs,value,value.data['__function'].get('bound',None)))
+                except FunctionException as error:
+                    raise NSEException.fromNode(error.message or '',node)
+                
+        if value.type == NSTypes.Decorator:
+            if len(args) == 0:
+                raise NSEException.fromNode('Inline decorator calls require at least one argument', node)
+            if 'post' in value.data:
+                f = value.data['post']
+                f(ctx, frame, args[0], args[1:], node, ns.NodeDecorator(node.tokens, node.i, node))
+            return args[0]
         
-        try:
-            return f.call(ctx,frame,NSFunction.Arguments(args,kwargs,value,value.data['__function'].get('bound',None)))
-        except FunctionException as error:
-            raise NSEException.fromNode(error.message or '',node)
+        raise NSEException.fromNode('%s is not callable'%('null' if value.type==NSKind.Null else 'Value',),node)
     
     @_executor(ns.NodeAccessDot)
     def AccessDot( node: ns.NodeAccessDot, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
@@ -1219,10 +1220,19 @@ def ns_print(ctx: NSEContext, frame: NSEFrame, args: NSFunction.Arguments) -> NS
             s += ' '
     print(s)
     return NULL()
+
+GATE_AND  = 0
+GATE_OR   = 1
+GATE_XOR  = 2
+GATE_NAND = 3
+GATE_NOR  = 4
+GATE_NXOR = 5
     
-@NSValue.Function
-def ns_and(ctx: NSEContext, frame: NSEFrame, args: NSFunction.Arguments) -> NSValue:
-    return NSTypes.And.instantiate()
+def gate_generator( variant ):
+    @NSValue.Function
+    def gate(ctx: NSEContext, frame: NSEFrame, args: NSFunction.Arguments) -> NSValue:
+        return NSTypes.Logic.instantiate(variant)
+    return gate
     
 @NSValue.BasicDecorator
 def export(ctx: NSEContext, frame: NSEFrame, value: NSValue, args: list[NSValue], node: ns.DecoratableNode, dec: ns.NodeDecorator):
@@ -1234,13 +1244,27 @@ def export(ctx: NSEContext, frame: NSEFrame, value: NSValue, args: list[NSValue]
     if name:
         ctx.root_frame.vars.new(name, value)
     
+@NSValue.Function
+def require(ctx: NSEContext, frame: NSEFrame, args: NSFunction.Arguments) -> NSValue:
+    _check_called_with(args, (NSTypes.String,))
+    found, comp = exec_file(pathlib.Path(args.args[0].data).resolve()).frame.vars.get('component')
+    if not found:
+        raise FunctionException('Could not retreive component from required file')
+    return comp
+    
 globals = NSEVars({
     'print': ns_print,
-    'and': ns_and,
+    'and': gate_generator(GATE_AND),
+    'or': gate_generator(GATE_OR),
+    'xor': gate_generator(GATE_XOR),
+    'nand': gate_generator(GATE_NAND),
+    'nor': gate_generator(GATE_NOR),
+    'nxor': gate_generator(GATE_NXOR),
     'true': TRUE(),
     'false': FALSE(),
     'null': NULL(),
-    'export': export
+    'export': export,
+    'require': require
 },True)
 
 class ExecutionResult:
@@ -1250,9 +1274,9 @@ class ExecutionResult:
     def __init__(self, frame: NSEFrame):
         self.frame = frame
 
-def exec_code( root: ns.NodeBlock ):
+def exec_code( root: ns.NodeBlock, locals: dict = None ) -> ExecutionResult:
 
-    root_frame = NSEFrame(globals.extend(),None)
+    root_frame = NSEFrame(globals.extend(locals or {}),None)
 
     context = NSEContext(root_frame)
     try:
@@ -1274,4 +1298,30 @@ def exec_code( root: ns.NodeBlock ):
 
     return ExecutionResult(root_frame)
 
-exec_code(tree)
+def exec_file( path: str ) -> Union[ExecutionResult,NSEException,ns.ParseError]:
+    source = ns.Source.fromFile( path )
+    tokens = ns.tokenize( source )
+    tree   = ns.parse( tokens )
+    if isinstance(tree, ns.ParseError):
+        raise tree
+    # TODO: re-implement this, somehow     
+    # if consume_ns_arg('-ast'):
+    #     print(explore(tree))
+    #     exit(0)
+    component = NSTypes.Component.instantiate()
+    @NSValue.BasicDecorator
+    def cp_input(ctx: NSEContext, frame: NSEFrame, value: NSValue, args: list[NSValue], node: ns.DecoratableNode, dec: ns.NodeDecorator):
+        component.props['inputs'].data['items'].append(value)
+    @NSValue.BasicDecorator
+    def cp_output(ctx: NSEContext, frame: NSEFrame, value: NSValue, args: list[NSValue], node: ns.DecoratableNode, dec: ns.NodeDecorator):
+        component.props['outputs'].data['items'].append(value)
+    return exec_code(tree,{
+        'component': component,
+        'input': cp_input,
+        'output': cp_output
+    })
+
+mainPath = pathlib.Path(args[0]).resolve()
+result = exec_file(mainPath)
+if isinstance(result, ns.ParseError):
+    print(result)

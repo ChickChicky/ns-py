@@ -298,7 +298,7 @@ def tokenize(source: Source) -> Tokens:
             if not compound and not (in_block_comment or in_line_comment):
                 if ch in ' \t\n':
                     sep(i)
-                elif ch in '.,:;\/+-*=!?()[]\{\}<>@#~^&\\|':
+                elif ch in '.,:;/+-*=!?()[]{}<>@#~^&\\|':
                     sep(i)
                     tmp = ch
                     sep(i,False)
@@ -1098,7 +1098,7 @@ class NodeImport( Node ):
         else:
             raise ParseError.fromToken('Expected import name or `,`',token)
 
-class NodeLet( Node ):
+class NodeLet( DecoratableNode ):
     """
     A variable declaration
     """
