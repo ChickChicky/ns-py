@@ -787,7 +787,7 @@ class NodeExpression ( Node ):
             return ParseError.fromToken('Objects are not supported yet', token)
             ctx.open(token,'}>')
         elif token.t == 'fn':
-            ctx.node = NodeFunction(self.tokens,ctx.ptr,self)
+            ctx.node = NodeFunction(self.tokens,ctx.ptr,self,closeToken=self.closeToken)
             token.tag(ctx.node)
             self.buffer.append(ctx.node)
         elif token.t == 'if':
@@ -1148,8 +1148,9 @@ class NodeFunction( DecoratableNode ):
     pararameters : list[FunctionParameter]
     type         : Union[NodeExpression,None]
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node ):
+    def __init__( self, tokens:Tokens, i:int, parent:Node, closeToken:tuple[str]=None ):
         super().__init__(tokens,i,parent)
+        self.closeToken = closeToken
         self.n = 0
         self.buffer = {}
         self.name = None
@@ -1207,19 +1208,24 @@ class NodeFunction( DecoratableNode ):
                 return ParseError.fromToken('Expected `,` or `)`', token)
             self.n -= 1
         elif self.n == 3: # Type hint or body
-            if token.t == '{':
+            if self.type != None and self.closeToken != None:
+                ctx.node = self.parent
+                ctx.ptr -= 1
+            elif token.t == '{':
+                if self.closeToken != None:
+                    return ParseError.fromToken('A function type can\'t have a body', token)
                 ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=True)
                 self.body = ctx.node
                 ctx.open(token,'}')
             elif token.t == '->' and self.type == None:
                 token.tag(self)
-                ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,('{',';'),True,isType=True)
+                ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,self.closeToken if self.closeToken != None else ('{',';'),True,isType=True)
                 self.type = ctx.node
                 self.n -= 1
-            elif token.t == ';':
+            elif token.t == ';' and self.closeToken == None:
                 ctx.node = self.parent
             else:
-                return ParseError.fromToken('Expected one of `{`, `;`'+(', `->`' if self.type == None else ''), token)
+                return ParseError.fromToken('Expected '+('`{`, `;` ' if self.closeToken == None else '')+(', `->`' if self.type == None else ''), token)
         elif self.n == 4:
             ctx.node = self.parent
         self.n += 1
