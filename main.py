@@ -23,7 +23,9 @@ tree   = ns.parse( tokens )
 #         print(indent+repr(tree))
 
 def explore(tree) -> str:
-    if isinstance(tree,(ns.Node,ns.FunctionParameter)):
+    if isinstance(tree,ns.NodeExpression):
+        return '\x1b[105;1m'+('T'if tree.type else 'E')+'\x1b[49;22m'+explore(tree.expression)
+    elif isinstance(tree,(ns.Node,ns.FunctionParameter)):
         s = '\x1b[1;7m'+tree.__class__.__name__+'\x1b[m { '
         props = {}
         props.update(dict(map(lambda k:(k,getattr(tree,k) if hasattr(tree,k) else None),tree.__annotations__)))
@@ -54,7 +56,7 @@ def explore(tree) -> str:
         if len(tree): s += '\n'
         for v in tree:
             s += '  '+explore(v).replace('\n','\n  ')+'\x1b[39m\n'
-        return s+']'
+        return s+'}'
     elif isinstance(tree,tuple):
         s = '( '
         for i,v in enumerate(tree):

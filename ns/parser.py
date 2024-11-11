@@ -625,9 +625,9 @@ class NodeCast( Node ):
     """
     
     value : 'NodeExpression'
-    type  : 'NodeTypeHint'
+    type  : 'NodeExpression'
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node, value:'NodeExpression', cast:'NodeTypeHint' ):
+    def __init__( self, tokens:Tokens, i:int, parent:Node, value:'NodeExpression', cast:'NodeExpression' ):
         super().__init__(tokens,i,parent)
         self.value = value
         self.type = cast
@@ -637,9 +637,11 @@ class NodeExpression ( Node ):
     An expression
     """
     
-    expression    : Union[Node,None]
+    expression : Union[Node,None]
+    type       : bool
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node, closeToken:tuple[str], handleParent:bool=False, allowEmpty:bool=False, finishEnclose:Union[str,None]=None ):
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node, closeToken:tuple[str], handleParent:bool=False, allowEmpty:bool=False, finishEnclose:Union[str,None]=None, isType:bool=False ):
         """
         :param str closeToken: A string or list of string that should be used to close the expression
         :param bool handleParent: Whether the parsing should resume after (False) or at (True) the enclosing token
@@ -651,6 +653,7 @@ class NodeExpression ( Node ):
         self.handleParent = handleParent
         self.allowEmpty = allowEmpty
         self.finishEnclose = finishEnclose
+        self.type = isType
         self.n = 0
         self.buffer = []
         self.expression = None
@@ -794,11 +797,22 @@ class NodeExpression ( Node ):
         elif token.t == '<>':
             if len(self.buffer) and type(self.buffer[-1]) != Token:
                 value = self.buffer.pop()
-                ctx.node = NodeTypeHint(self.tokens,ctx.ptr,self,self.closeToken,handleParent=True,allowEmpty=False)
+                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,self.closeToken,handleParent=True,allowEmpty=False,isType=True)
                 token.tag(ctx.node)
                 self.buffer.append(NodeCast(self.tokens,ctx.ptr,self,value,ctx.node))
             else:
                 return ParseError.fromToken('Expected expression before type cast', token)
+        elif token.t == '<' and self.type:
+            if len(self.buffer):
+                value = self.buffer.pop()
+                ctx.node = NodeTypeGeneric(self.tokens,ctx.ptr,self,value)
+                self.buffer.append(ctx.node)
+                ctx.open(token,'>')
+            else:
+                return ParseError.fromToken('Expected expression before generic arguments', token)
+        elif token.t in ('<<','>>') and self.type:
+            self.tokens.splitToken(token)
+            ctx.ptr -= 1
         elif token.t == '=>' or token.t == '->':
             if len(self.buffer) and type(self.buffer[-1]) != Token:
                 value = self.buffer.pop()
@@ -808,9 +822,18 @@ class NodeExpression ( Node ):
             else:
                 return ParseError.fromToken('Expected expression before reference expression', token)
         elif token.isidentifier():
-            n = NodeName(self.tokens,ctx.ptr,self,token.t)
-            token.tag(n,'name')
-            self.buffer.append(n)
+            if token.t == 'struct':
+                ctx.node = NodeStruct(self.tokens,ctx.ptr,self,allowUnnamed=True)
+                token.tag(ctx.node)
+                self.buffer.append(ctx.node)
+            elif token.t == 'enum':
+                ctx.node = NodeEnum(self.tokens,ctx.ptr,self,allowUnnamed=True)
+                token.tag(ctx.node)
+                self.buffer.append(ctx.node)
+            else:
+                n = NodeName(self.tokens,ctx.ptr,self,token.t)
+                token.tag(n,'name')
+                self.buffer.append(n)
         elif token.isnumeric():
             n = NodeNumber(self.tokens,ctx.ptr,self,token.t)
             token.tag(n,'number')
@@ -944,141 +967,12 @@ class NodeTypeGeneric( Node ):
             ctx.node = self.parent
         elif token.t == ',':
             token.tag(self)
-            self.args.append(self.idx or NodeTypeHint(self.tokens,self.i,self,(',','>'),handleParent=True,allowEmpty=True))
+            self.args.append(self.idx or NodeExpression(self.tokens,self.i,self,(',','>'),handleParent=True,allowEmpty=True,isType=True))
             self.idx = None
         else:
-            ctx.node = NodeTypeHint(self.tokens,self.i,self,(',','>'),handleParent=True,allowEmpty=True)
+            ctx.node = NodeExpression(self.tokens,self.i,self,(',','>'),handleParent=True,allowEmpty=True,isType=True)
             self.idx = ctx.node
             ctx.ptr -= 1
-
-# TODO: Extract it to NodeExpression
-class NodeTypeHint( Node ):
-    """
-    An type expression
-    """
-
-    expression    : Union[Node,None]
-    
-    def __init__( self, tokens:Tokens, i:int, parent:Node, closeToken:tuple[str], handleParent:bool=False, allowEmpty:bool=False, finishEnclose:Union[str,None]=None ):
-        """
-        :param str closeToken: A string or list of string that should be used to close the type hint
-        :param bool handleParent: Whether the parsing should resume after (False) or at (True) the enclosing token
-        :param bool allowEmpty: Whether the type hint is allowed to be empty
-        """
-        super().__init__(tokens,i,parent)
-        self.closeToken = closeToken
-        self.handleParent = handleParent
-        self.allowEmpty = allowEmpty
-        self.finishEnclose = finishEnclose
-        self.n = 0
-        self.buffer = []
-        self.expression = None
-        
-    def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
-        # Checks if the current token is a closing token for the type hint
-        if token.t == self.closeToken if type(self.closeToken) == str else token.t in self.closeToken:
-            # Checks for unfinished accessor operators
-            if len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
-                return ParseError.fromToken('Unexpected end of type hint after `%s`'%(self.buffer[-1].t,), token)
-            # Checks for empty type hints
-            if not self.allowEmpty and len(self.buffer) == 0:
-                return ParseError.fromToken('Unexpected empty type hint', token)
-            # Checks for surrounding brackets
-            if self.finishEnclose:
-                ctx.close(token)
-            # 'Resolves' operators
-            for prec in operators:
-                ops = list(prec.keys())
-                i = 0
-                while i < len(self.buffer):
-                    v = self.buffer[i]
-                    if type(v) == Token and v.t in ops:
-                        kind = prec.get(v.t)
-                        if kind == 'prefix':
-                            if ((i == 0 or type(self.buffer[i-1]) == Token) and i < len(self.buffer)-1) and type(self.buffer[i+1]) != Token:
-                                op = self.buffer.pop(i)
-                                value = self.buffer.pop(i)
-                                o = NodeOperatorPrefix(self.tokens,self.tokens.tokens.index(v),self,op,value)
-                                v.tag(o)
-                                self.buffer.insert(i,o)
-                                i = -1
-                        elif kind == 'binary':
-                            if i < len(self.buffer)-1 and i > 0 and type(self.buffer[i-1]) != Token and type(self.buffer[i+1]) != Token:
-                                right = self.buffer.pop(i-1)
-                                op = self.buffer.pop(i-1)
-                                left = self.buffer.pop(i-1)
-                                o = NodeOperatorBinary(self.tokens,self.tokens.tokens.index(v),self,op,left,right)
-                                v.tag(o)
-                                self.buffer.insert(i-1,o)
-                                i = -1
-                        elif kind == 'postfix':
-                            if ((i == len(self.buffer)-1 or type(self.buffer[i+1]) == Token) and i > 0) and type(self.buffer[i-1]) != Token:
-                                value = self.buffer.pop(i-1)
-                                op = self.buffer.pop(i-1)
-                                o = NodeOperatorPostfix(self.tokens,self.tokens.tokens.index(v),self,op,value)
-                                v.tag(o)
-                                self.buffer.insert(i-1,o)
-                                i = -1
-                        else:
-                            return ParseError.fromToken('Invalid operation', v)
-                    i += 1
-            # Errors out if there are extra operators
-            for v in self.buffer:
-                if type(v) == Token:
-                    return ParseError.fromToken('Unexpected token', v)
-            # Errors out if there are multiple expressions inside of a single type hint
-            if len(self.buffer) > 1:
-                return ParseError.fromToken('Malformed type hint', token)
-            # Moves the pointer back in case of a handling parent so that it will also receive the closing token
-            if self.handleParent:
-                ctx.ptr -= 1
-            self.expression = self.buffer[0] if len(self.buffer) else None
-            ctx.node = self.parent
-        # Dot and colon accessor operators
-        elif len(self.buffer) > 0 and type(self.buffer[-1]) == Token and self.buffer[-1].t in ('.',':'):
-            a = self.buffer.pop()
-            if not token.isidentifier():
-                return ParseError.fromToken('Expected identifier after `%s`'%(a.t,), token)
-            v = self.buffer.pop()
-            self.buffer.append(NodeAccessDot(self.tokens,ctx.ptr,self,v,token.t))
-        # Dot and colon accessor operators
-        elif token.t in ('.',':'):
-            if len(self.buffer) > 0 and type(self.buffer[-1]) == Token :
-                return ParseError.fromToken('Unexpected token', token)
-            else:
-                if len(self.buffer) > 0:
-                    self.buffer.append(token)
-                else:
-                    return ParseError.fromToken('Missing expression before `%s`'%(token.t,), token)
-        elif token.t == '>>':
-            self.tokens.splitToken(token)
-            ctx.ptr -= 1
-        elif token.t == '(':
-            ctx.node = NodeTypeHint(self.tokens,ctx.ptr,self,')',allowEmpty=True,finishEnclose=')')
-            self.buffer.append(ctx.node)
-            ctx.open(token,')')
-        elif token.t == '[':
-            return ParseError.fromToken('Arrays are not supported yet', token)
-        elif token.t == '<':
-            if len(self.buffer):
-                value = self.buffer.pop()
-                ctx.node = NodeTypeGeneric(self.tokens,ctx.ptr,self,value)
-                self.buffer.append(ctx.node)
-                ctx.open(token,'>')
-            else:
-                return ParseError.fromToken('Expected expression before generic arguments', token)
-        elif token.isidentifier():
-            self.buffer.append(NodeName(self.tokens,ctx.ptr,self,token.t))
-        elif token.isnumeric():
-            self.buffer.append(NodeNumber(self.tokens,ctx.ptr,self,token.t))
-        elif token.isstring():
-            self.buffer.append(NodeString(self.tokens,ctx.ptr,self,self.tokens,token.t[1:-1]))
-        elif token.t in operatorTokens:
-            self.buffer.append(token)
-        elif type(token.t) == TokenEOF:
-            return ParseError.fromToken('Unexpected EOF', token)
-        else:
-            return ParseError.fromToken('Unexpected token', token)
 
 class NodeImport( Node ):
     """
@@ -1109,7 +1003,7 @@ class NodeLet( DecoratableNode ):
     name      : str
     expr      : NodeExpression
     modifiers : set[str]
-    type      : Union[NodeTypeHint,None]
+    type      : Union[NodeExpression,None]
     
     def __init__( self, tokens:Tokens, i:int, parent:Node ):
         super().__init__(tokens,i,parent)
@@ -1151,7 +1045,7 @@ class NodeLet( DecoratableNode ):
                 self.expr = ctx.node
             elif token.t == ':':
                 token.tag(self)
-                ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,(';','='),True)
+                ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,(';','='),True,isType=True)
                 token.tag(ctx.node,'open')
                 self.type = ctx.node
                 self.n -= 1
@@ -1252,7 +1146,7 @@ class NodeFunction( DecoratableNode ):
     body         : Union['NodeBlock',None]
     modifiers    : set[str]
     pararameters : list[FunctionParameter]
-    type         : Union[NodeTypeHint,None]
+    type         : Union[NodeExpression,None]
     
     def __init__( self, tokens:Tokens, i:int, parent:Node ):
         super().__init__(tokens,i,parent)
@@ -1295,7 +1189,7 @@ class NodeFunction( DecoratableNode ):
                     return ParseError.fromToken('Expected an identifier or `)`', token)
             elif 'type_hint' not in self.buffer:
                 if token.t == ':':
-                    ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,(',',')'),True)
+                    ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,(',',')'),True,isType=True)
                     token.tag(ctx.node,'open')
                     self.buffer['type_hint'] = ctx.node
                 elif token.t == '=':
@@ -1319,7 +1213,7 @@ class NodeFunction( DecoratableNode ):
                 ctx.open(token,'}')
             elif token.t == '->' and self.type == None:
                 token.tag(self)
-                ctx.node = NodeTypeHint(self.tokens,ctx.ptr+1,self,('{',';'),True)
+                ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,('{',';'),True,isType=True)
                 self.type = ctx.node
                 self.n -= 1
             elif token.t == ';':
@@ -1634,7 +1528,7 @@ class NodeEnumMember( Node ):
                 elif self.st == 1:
                     if token.t != ':':
                         return ParseError.fromToken('Expected  `:`')
-                    ctx.node = NodeTypeHint(self.tokens, ctx.ptr+1, self, [',',';','}'], True)
+                    ctx.node = NodeExpression(self.tokens, ctx.ptr+1, self, [',',';','}'], True, isType=True)
                     self.tmp[1] = ctx.node
                     self.st += 1
                 else:
@@ -1651,7 +1545,7 @@ class NodeEnumMember( Node ):
                         ctx.close(token)
                         ctx.node = self.parent
                 else:
-                    ctx.node = NodeTypeHint(self.tokens, ctx.ptr, self, [',',';',')'], True)
+                    ctx.node = NodeExpression(self.tokens, ctx.ptr, self, [',',';',')'], True, isType=True)
                     ctx.ptr -= 1
                     self.data.append(ctx.node)
 
@@ -1705,9 +1599,9 @@ class NodeStructProp( Node ):
     """
     
     name : str
-    type : NodeTypeHint
+    type : NodeExpression
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node, name:str, hint:NodeTypeHint ):
+    def __init__( self, tokens:Tokens, i:int, parent:Node, name:str, hint:NodeExpression ):
         super().__init__(tokens,i,parent)
         self.name = name
         self.type = hint
@@ -1834,7 +1728,7 @@ class NodeBlock( Node ):
             if self.parent != None:
                 return ParseError.fromToken('Unexpected EOF', token)
         elif token.isidentifier() and isinstance(self.parent,NodeStruct) and ctx.tokens.tokens[ctx.ptr+1].t == ':':
-            hint = NodeTypeHint(self.tokens,ctx.ptr+2,None,';',handleParent=False,allowEmpty=True)
+            hint = NodeExpression(self.tokens,ctx.ptr+2,None,';',handleParent=False,allowEmpty=True,isType=True)
             prop = NodeStructProp(self.tokens,ctx.ptr,self,token.t,hint)
             hint.parent = prop
             ctx.tokens.tokens[ctx.ptr+1].tag(hint,'open')
