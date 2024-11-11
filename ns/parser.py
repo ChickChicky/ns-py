@@ -454,7 +454,9 @@ class NodeNumber( Node ):
     
     def __init__( self, tokens:Tokens, i:int, parent:Node, value:Union[int,float,str] ):
         super().__init__(tokens,i,parent)
-        self.value = float(value) if type(value) == str else value
+        i = int(value)
+        f = float(value)
+        self.value = (i if i == f else f) if type(value) == str else value
         
 class NodeString( Node ):
     """

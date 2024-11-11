@@ -4,7 +4,28 @@
 
 Everything is in constant movement and subject to change, but since I'm mainly working on the interpreter now, the syntax should not change all so much.
 
-# Examples
+# Example (ns2c)
+
+To run a program:
+```sh
+python3 ns2c.py <file.ns>
+```
+
+([./helloworld.ns](./helloworld.ns))
+```rust
+fn main() -> int {
+    printf("Hello, world!\n");
+    return 0;
+}
+```
+> Hello, world!
+
+# Examples (ns2sml)
+
+To run a program:
+```sh
+python3 ns2sml.py <file.ns>
+```
 
 ```js
 // Basic hello world
