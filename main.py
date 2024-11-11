@@ -50,7 +50,7 @@ def explore(tree) -> str:
             s += '  '+explore(v).replace('\n','\n  ')+'\x1b[39m\n'
         return s+']'
     elif isinstance(tree,set):
-        s = '(set)['
+        s = 'set{ '
         if len(tree): s += '\n'
         for v in tree:
             s += '  '+explore(v).replace('\n','\n  ')+'\x1b[39m\n'
@@ -60,6 +60,14 @@ def explore(tree) -> str:
         for i,v in enumerate(tree):
             s += explore(v).replace('\n','\n  ')+'\x1b[39m'+(', ' if i < len(tree)-1 else '')
         s += ' )'
+        return s
+    elif isinstance(tree,dict):
+        s = '{ '
+        if len(tree): s += '\n  '
+        for i,(k,v) in enumerate(tree.items()):
+            s += k + ': ' + explore(v).replace('\n','\n  ')+'\x1b[39m'+(', '+('\n  ' if len(tree) else '') if i < len(tree)-1 else '')
+        if len(tree): s += '\n'
+        s += '}'
         return s
     elif isinstance(tree,ns.Token):
         return str(tree)

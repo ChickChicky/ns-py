@@ -351,7 +351,7 @@ class ParseContext:
     def open( self, start:Token, end:str ):
         self.enclose.append(Enclosure(start,end))
         
-    def close( self, token:Token ) -> bool:
+    def close( self, token:Token ):
         if len(self.enclose) and self.enclose[-1].end == token.t:
             self.enclose.pop()
         else:
@@ -1525,7 +1525,7 @@ class NodeConstructor( Node ):
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
         if self.constructor == None:
             if token.t == '{':
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self+('constructor',),handleParent=True,singleElement=False)
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=True,singleElement=False)
                 token.tag(ctx.node)
                 self.constructor = ctx.node
                 ctx.open(token,'}')
@@ -1564,7 +1564,128 @@ class NodeStruct( Node ):
                 return ParseError.fromToken('Expected `{`', token)
         else:
             ctx.node = self.parent
-            
+
+class NodeEnumMember( Node ):
+    """
+    An enum member declaration
+    """
+    
+    name : str
+    type : Literal['unary', 'tuple', 'struct']
+    data : dict[str,]
+    
+    def __init__( self, tokens:Token, i:int, parent:Node, crepr:bool=False ):
+        super().__init__(tokens,i,parent)
+        self.name = None
+        self.type = None
+        self.data = None
+        self.tmp = None
+        self.st = 0
+        self.crepr = crepr
+        
+    def feed(self, token: Token, ctx: ParseContext) -> Union[ParseError, None]:
+        if self.name == None:
+            if not token.isidentifier():
+                return ParseError.fromToken('Expected identifier', token)
+            token.tag(self, 'name')
+            self.name = token.t
+        elif self.type == None:
+            if token.t in (';', ',', '}'):
+                if token.t == '}':
+                    ctx.ptr -= 1
+                self.type = 'unary'
+                self.data = None
+                ctx.node = self.parent
+            elif token.t == '(':
+                if self.crepr:
+                    return ParseError.fromToken('Tuples are not allowed for crepr', token)
+                ctx.open(token,')')
+                self.type = 'tuple'
+                self.data = []
+            elif token.t == '{':
+                if self.crepr:
+                    return ParseError.fromToken('Structs are not allowed for crepr', token)
+                ctx.open(token,'}')
+                self.type = 'struct'
+                self.data = {}
+            else:
+                # TODO: better message, lol
+                return ParseError.fromToken('Unexpected token', token)
+        else:
+            if self.type == 'struct':
+                if self.st == 0:
+                    if token.t in (',', ';', '}'):
+                        if token.t == '}':
+                            ctx.close(token)
+                            ctx.node = self.parent
+                    else:
+                        if not token.isidentifier():
+                            return ParseError.fromToken('Expected identifier', token)
+                        self.tmp = [token, None]
+                        self.st += 1
+                elif self.st == 1:
+                    if token.t != ':':
+                        return ParseError.fromToken('Expected  `:`')
+                    ctx.node = NodeTypeHint(self.tokens, ctx.ptr+1, self, [',',';','}'], True)
+                    self.tmp[1] = ctx.node
+                    self.st += 1
+                else:
+                    self.data[self.tmp[0].t] = self.tmp[1]
+                    if token.t == '}':
+                        ctx.close(token)
+                        ctx.node = self.parent
+                    else:
+                        self.st = 0
+                    self.tmp = None
+            if self.type == 'tuple':
+                if token.t in (',', ';', ')'):
+                    if token.t == ')':
+                        ctx.close(token)
+                        ctx.node = self.parent
+                else:
+                    ctx.node = NodeTypeHint(self.tokens, ctx.ptr, self, [',',';',')'], True)
+                    ctx.ptr -= 1
+                    self.data.append(ctx.node)
+
+class NodeEnum( Node ):
+    """
+    An enum declaration
+    """
+    
+    name    : str
+    members : list[NodeEnumMember]
+    
+    def __init__( self, tokens:Tokens, i:int, parent:Node ):
+        super().__init__(tokens,i,parent)
+        self.name = None
+        self.members = None
+        self.crepr = False
+        
+    def feed( self, token:Token, ctx:ParseContext ):
+        if self.name == None:
+            if token.isidentifier():
+                token.tag(self,'name')
+                self.name = token.t
+            elif token.isstring() and token.t[1:-1] == 'C':
+                self.crepr = True
+            else:
+                return ParseError.fromToken('Expected identifier', token)
+        elif self.members == None:
+            if token.t != '{':
+                return ParseError.fromToken('Expected `{`', token)
+            ctx.open(token,'}')
+            self.members = []
+        else:
+            if token.t in (';', ','):
+                pass
+            elif token.isidentifier():
+                ctx.node = NodeEnumMember(self.tokens,ctx.ptr,self,self.crepr)
+                self.members.append(ctx.node)
+                ctx.ptr -= 1
+            elif token.t == '}':
+                ctx.close(token)
+                ctx.node = self.parent
+
 class NodeStructProp( Node ):
     """
     A struct property declaration
@@ -1690,6 +1811,10 @@ class NodeBlock( Node ):
             self.children.append(ctx.node)
         elif token.t == 'import':
             ctx.node = NodeImport(self.tokens,ctx.ptr,self)
+            token.tag(ctx.node)
+            self.children.append(ctx.node)
+        elif token.t == 'enum':
+            ctx.node = NodeEnum(self.tokens,ctx.ptr,self)
             token.tag(ctx.node)
             self.children.append(ctx.node)
         elif type(token.t) == TokenEOF:
