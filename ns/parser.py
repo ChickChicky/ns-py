@@ -1545,21 +1545,26 @@ class NodeStruct( Node ):
     name : str
     body : 'NodeBlock'
         
-    def __init__( self, tokens:Tokens, i:int, parent:Node ):
+    def __init__( self, tokens:Tokens, i:int, parent:Node, allowUnnamed:bool=False ):
         super().__init__(tokens,i,parent)
+        self.allowUnnamed = allowUnnamed
         self.name = None
+        self.unnamed = False
         self.body = None
         
     def feed( self, token:Token, ctx:ParseContext ) -> Union[ParseError,None]:
-        if self.name == None:
+        if self.name == None and not self.unnamed:
             if token.isidentifier():
                 token.tag(self,'name')
                 self.name = token.t
+            elif token.t == '{' and self.allowUnnamed:
+                self.unnamed = True
+                ctx.ptr -= 1
             else:
                 return ParseError.fromToken('Expected identifier', token)
         elif self.body == None:
             if token.t == '{':
-                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=False)
+                ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=True)
                 token.tag(ctx.node)
                 self.body = ctx.node
                 ctx.open(token,'}')
@@ -1658,19 +1663,24 @@ class NodeEnum( Node ):
     name    : str
     members : list[NodeEnumMember]
     
-    def __init__( self, tokens:Tokens, i:int, parent:Node ):
+    def __init__( self, tokens:Tokens, i:int, parent:Node, allowUnnamed:bool=False ):
         super().__init__(tokens,i,parent)
+        self.allowUnnamed = allowUnnamed
         self.name = None
+        self.unnamed = False
         self.members = None
         self.crepr = False
         
     def feed( self, token:Token, ctx:ParseContext ):
-        if self.name == None:
+        if self.name == None and not self.unnamed:
             if token.isidentifier():
                 token.tag(self,'name')
                 self.name = token.t
             elif token.isstring() and token.t[1:-1] == 'C':
                 self.crepr = True
+            elif token.t == '{' and self.allowUnnamed:
+                self.unnamed = True
+                ctx.ptr -= 1
             else:
                 return ParseError.fromToken('Expected identifier', token)
         elif self.members == None:
