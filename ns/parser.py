@@ -12,6 +12,9 @@ class Source:
         self.name = name
         self.body = body
         
+    def lines( self ) -> list[str]:
+        return list(map(lambda l:l.removesuffix('\r'),self.body.split('\n')))
+        
     @staticmethod
     def fromFile( path:str ) -> 'Source':
         """
@@ -378,7 +381,7 @@ class ParseError(BaseException):
         self.trace = []
         
     def __str__( self ) -> str:
-        rline = self.source.body.splitlines(False)[self.l]
+        rline = self.source.lines()[self.l]
         line = rline.lstrip()     # removes all indent
         dl = len(rline)-len(line) # computes the shift caused by the indent
         msg = '\x1b[31;1mSyntax error\x1b[22;39m (\x1b[36m%s:%d:%d\x1b[39m):\n' % ( self.source.name, self.l+1, self.c+1 )
