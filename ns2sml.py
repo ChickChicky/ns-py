@@ -772,6 +772,8 @@ class NSEExecutors:
             
     @_executor(ns.NodeExpression)
     def Expression( node: ns.NodeExpression, frame: NSEFrame, ctx: 'NSEContext' ) -> NSValue:
+        if node.expression == None:
+            return NULL()
         return ctx.exec(node.expression,frame)
     
     @_executor(ns.NodeName)
