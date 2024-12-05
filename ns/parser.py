@@ -1219,6 +1219,11 @@ class NodeFunction( DecoratableNode ):
                 ctx.node = NodeBlock(self.tokens,ctx.ptr,self,handleParent=True)
                 self.body = ctx.node
                 ctx.open(token,'}')
+            elif token.t == '(':
+                ctx.node = NodeExpression(self.tokens,ctx.ptr,self,')',handleParent=True,allowEmpty=True,finishEnclose=')')
+                token.tag(ctx.node,'open')
+                self.body = ctx.node
+                ctx.open(token,')')
             elif token.t == '->' and self.type == None:
                 token.tag(self)
                 ctx.node = NodeExpression(self.tokens,ctx.ptr+1,self,self.closeToken if self.closeToken != None else ('{',';'),True,isType=True)
@@ -1227,7 +1232,7 @@ class NodeFunction( DecoratableNode ):
             elif token.t == ';' and self.closeToken == None:
                 ctx.node = self.parent
             else:
-                return ParseError.fromToken('Expected '+('`{`, `;` ' if self.closeToken == None else '')+(', `->`' if self.type == None else ''), token)
+                return ParseError.fromToken('Expected one of `{` `(`, `;`'+(', `->`' if self.type == None else ''), token)
         elif self.n == 4:
             ctx.node = self.parent
         self.n += 1
